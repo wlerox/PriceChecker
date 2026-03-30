@@ -27,12 +27,10 @@ export function foldForMatch(s: string): string {
     .replace(/û/g, "u");
 }
 
-/**
- * Kategori listesiyle dönen mağazalar: başlık her zaman sorgu kelimelerini içermez;
- * sıkı filtre tüm satırı siler.
- * Hepsiburada: arama sonuçlarında başlık SEO/marka ağırlıklı olabiliyor; sitede görünen satırlar sorgudaki her kelimeyi taşımayabilir.
- */
-const STORES_SKIP_TITLE_RELEVANCE = new Set<string>(["Çiçeksepeti", "Hepsiburada"]);
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 /**
  * Uzun sorgularda (4+ anlamlı parça) tüm kelimeleri başlıkta aramak ucuz/kısa ilanları düşürür;
@@ -40,7 +38,14 @@ const STORES_SKIP_TITLE_RELEVANCE = new Set<string>(["Çiçeksepeti", "Hepsibura
  */
 function titleMatchesQueryTokens(foldedTitle: string, foldedTokens: string[]): boolean {
   if (foldedTokens.length === 0) return true;
-  const matched = foldedTokens.filter((tok) => foldedTitle.includes(tok)).length;
+  const matched = foldedTokens.filter((tok) => {
+    if (/\d/.test(tok)) {
+      // Sayısal model token'larında (5080, s24 vb.) alt model sızıntılarını azaltmak için sınır eşleşmesi kullan.
+      const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])${escapeRegExp(tok)}(?:$|[^\\p{L}\\p{N}])`, "u");
+      return re.test(foldedTitle);
+    }
+    return foldedTitle.includes(tok);
+  }).length;
   if (foldedTokens.length <= 3) return matched === foldedTokens.length;
   const need = Math.max(2, foldedTokens.length - 1);
   return matched >= need;
@@ -54,7 +59,6 @@ export function filterProductsByQuery(query: string, products: Product[]): Produ
   if (tokens.length === 0) return products;
   const foldedTokens = tokens.map(foldForMatch);
   return products.filter((p) => {
-    if (STORES_SKIP_TITLE_RELEVANCE.has(p.store)) return true;
     const t = foldForMatch(p.title);
     return titleMatchesQueryTokens(t, foldedTokens);
   });
@@ -90,9 +94,6 @@ export function applyRelevanceFilters(
   if (products.length === 0) return [];
   let relevant = filterProductsByQuery(query, products);
   relevant = filterProductsBySearchType(searchType, relevant);
-  if (relevant.length === 0) {
-    return products;
-  }
   return relevant;
 }
 

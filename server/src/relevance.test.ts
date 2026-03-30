@@ -32,7 +32,7 @@ test("ASCII sorgu Türkçe başlıkla eşleşir (kulaklik / kulaklık)", () => {
   assert.equal(out.length, 1);
 });
 
-test("Çiçeksepeti başlık filtresi atlanır", () => {
+test("Çiçeksepeti de title filtresine tabi", () => {
   const cicek: Product = {
     store: "Çiçeksepeti",
     title: "Hediye paketi ürün",
@@ -41,7 +41,28 @@ test("Çiçeksepeti başlık filtresi atlanır", () => {
     url: "https://ciceksepeti.com/x",
   };
   const out = filterProductsByQuery("rtx 5080", [cicek]);
+  assert.equal(out.length, 0);
+});
+
+test("Hepsiburada: title eşleşmeyen ürün elenir (rtx 5060 vs 5080)", () => {
+  const rows: Product[] = [
+    { ...p("MSI RTX 5060 Ventus"), store: "Hepsiburada" },
+    { ...p("ASUS RTX 5080 TUF"), store: "Hepsiburada" },
+  ];
+  const out = filterProductsByQuery("rtx 5080", rows);
   assert.equal(out.length, 1);
+  assert.ok(out[0].title.includes("5080"));
+});
+
+test("tüm mağazalarda eşleşmeyen satır elenir", () => {
+  const rows: Product[] = [
+    { ...p("Samsung Galaxy S24 Ultra"), store: "Trendyol" },
+    { ...p("Samsung Galaxy S23 Kılıf"), store: "N11" },
+    { ...p("Apple iPhone 15"), store: "Amazon TR" },
+  ];
+  const out = filterProductsByQuery("samsung galaxy s24", rows);
+  assert.equal(out.length, 1);
+  assert.ok(out[0].title.includes("S24"));
 });
 
 test("dizüstü alt kategorisinde aksesuar satırları elenir", () => {
