@@ -1,0 +1,51 @@
+type User @table {
+  displayName: String!
+  email: String
+  photoUrl: String
+  createdAt: Timestamp!
+}
+
+type Retailer @table {
+  name: String!
+  baseUrl: String!
+  logoUrl: String
+  createdAt: Timestamp!
+}
+
+type Product @table {
+  name: String!
+  url: String!
+  imageUrl: String!
+  description: String
+  brand: String
+  createdAt: Timestamp!
+  retailer: Retailer
+}
+
+type PriceHistory @table {
+  price: Float!
+  timestamp: Timestamp!
+  product: Product
+  retailer: Retailer
+}
+
+type WatchlistItem @table {
+  desiredPrice: Float!
+  notes: String
+  isPurchased: Boolean
+  createdAt: Timestamp!
+  user: User
+  product: Product
+}
+
+type Category @table {
+  name: String!
+  createdAt: Timestamp!
+  user: User
+}
+
+type ProductCategory @table(key: ["product", "category"]) {
+  assignedAt: Timestamp!
+  product: Product!
+  category: Category!
+}

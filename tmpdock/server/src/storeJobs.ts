@@ -10,7 +10,6 @@ import { searchPttAvm } from "./adapters/pttavm.ts";
 import { searchMediaMarkt } from "./adapters/mediamarkt.ts";
 import { searchCiceksepeti } from "./adapters/ciceksepeti.ts";
 import { searchTeknosa } from "./adapters/teknosa.ts";
-import { searchKoctas } from "./adapters/koctas.ts";
 
 export type StoreJob = { name: string; fn: () => Promise<Product[]> };
 
@@ -27,7 +26,6 @@ export const KNOWN_STORE_NAMES = [
   "MediaMarkt",
   "Çiçeksepeti",
   "Teknosa",
-  "Koçtaş",
 ] as const;
 
 const KNOWN_SET = new Set<string>(KNOWN_STORE_NAMES);
@@ -48,7 +46,6 @@ export function createStoreJobs(q: string, searchType?: string, onlyStores?: str
     { name: "MediaMarkt", fn: () => searchMediaMarkt(q) },
     { name: "Çiçeksepeti", fn: () => searchCiceksepeti(q) },
     { name: "Teknosa", fn: () => searchTeknosa(q) },
-    { name: "Koçtaş", fn: () => searchKoctas(q) },
   ];
 
   if (!onlyStores?.length) return all;

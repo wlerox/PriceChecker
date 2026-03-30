@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+.git
+.gitignore
+.cursor
+*.md
+.env
+.env.*
+client/dist
+server/dist
+tmpdock
+.firebase
+**/*.log
+coverage

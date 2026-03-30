@@ -1,4 +1,3 @@
-import cors from "cors";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import type { Product, SearchResponse } from "../../shared/types.ts";
@@ -22,38 +21,8 @@ function parseStoresQuery(raw: string | string[] | undefined): string[] | undefi
 
 const PORT = Number(process.env.PORT) || 3001;
 
-const extraCorsOrigins = (process.env.CORS_ORIGINS ?? "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-const allowedOriginPatterns = [
-  /^https:\/\/[\w-]+\.web\.app$/,
-  /^https:\/\/[\w-]+\.firebaseapp\.com$/,
-  /^http:\/\/localhost(?::\d+)?$/,
-  /^http:\/\/127\.0\.0\.1(?::\d+)?$/,
-];
-
-function isAllowedCorsOrigin(origin: string | undefined): boolean {
-  if (origin == null || origin === "") return true;
-  if (extraCorsOrigins.includes(origin)) return true;
-  return allowedOriginPatterns.some((re) => re.test(origin));
-}
-
 const app = express();
 app.set("trust proxy", 1);
-
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (isAllowedCorsOrigin(origin)) {
-        cb(null, origin ?? true);
-      } else {
-        cb(null, false);
-      }
-    },
-  }),
-);
 
 const limiter = rateLimit({
   windowMs: 60 * 1000,

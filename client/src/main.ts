@@ -2,6 +2,13 @@ import type { Product } from "../../shared/types.ts";
 import { parseTrPrice } from "../../shared/parsePrice";
 import "./style.css";
 
+/** Boş: geliştirmede Vite `/api` proxy; üretimde `VITE_API_BASE=https://api.example.com` (sonunda / yok). */
+function apiUrl(path: string): string {
+  const base = String(import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return base ? `${base}${p}` : p;
+}
+
 const STORE_OPTIONS = [
   "Trendyol",
   "Hepsiburada",
@@ -14,6 +21,7 @@ const STORE_OPTIONS = [
   "MediaMarkt",
   "Çiçeksepeti",
   "Teknosa",
+  "Koçtaş",
 ] as const;
 
 /** Üst kategori → alt kategori; API `type` için alt satırın apiValue’su veya üst varsayılanı kullanılır. */
@@ -93,7 +101,7 @@ app.innerHTML = `
   <main class="layout">
     <header class="header">
       <h1>TR fiyat karşılaştırma</h1>
-      <p class="sub">Trendyol, Hepsiburada, Amazon TR, N11, Pazarama, İdefix, Vatan, PTT Avm, MediaMarkt, Çiçeksepeti, Teknosa — yerelde çalışır, veri saklanmaz.</p>
+      <p class="sub">Trendyol, Hepsiburada, Amazon TR, N11, Pazarama, İdefix, Vatan, PTT Avm, MediaMarkt, Çiçeksepeti, Teknosa, Koçtaş — yerelde çalışır, veri saklanmaz.</p>
     </header>
 
     <form class="search-toolbar" id="form">
@@ -600,7 +608,7 @@ form.addEventListener("submit", async (e) => {
     const params = new URLSearchParams({ q });
     if (typeRaw !== undefined && typeRaw !== "") params.set("type", typeRaw);
     params.set("stores", selectedStores.join(","));
-    const res = await fetch(`/api/search/stream?${params.toString()}`);
+    const res = await fetch(apiUrl(`/api/search/stream?${params.toString()}`));
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error((err as { error?: string }).error ?? res.statusText);
