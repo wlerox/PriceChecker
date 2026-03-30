@@ -1,4 +1,4 @@
-import { chromium } from "playwright";
+import { launchChromiumPreferInstalled, playwrightHeadless } from "./playwrightLaunch.ts";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -11,18 +11,7 @@ function delay(ms: number): Promise<void> {
  * Gerçek Chromium ile Koçtaş arama HTML'i (WAF / bot engelinde curl yerine).
  */
 export async function fetchKoctasSearchHtmlWithPlaywright(searchUrl: string, homeUrl: string): Promise<string> {
-  const headless = process.env.PLAYWRIGHT_HEADLESS !== "0";
-  const useChrome = process.env.PLAYWRIGHT_USE_CHROME === "1";
-
-  const browser = await chromium.launch({
-    headless,
-    channel: useChrome ? "chrome" : undefined,
-    args: [
-      "--disable-blink-features=AutomationControlled",
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-    ],
-  });
+  const browser = await launchChromiumPreferInstalled(playwrightHeadless());
 
   try {
     const context = await browser.newContext({

@@ -30,8 +30,9 @@ export function foldForMatch(s: string): string {
 /**
  * Kategori listesiyle dönen mağazalar: başlık her zaman sorgu kelimelerini içermez;
  * sıkı filtre tüm satırı siler.
+ * Hepsiburada: arama sonuçlarında başlık SEO/marka ağırlıklı olabiliyor; sitede görünen satırlar sorgudaki her kelimeyi taşımayabilir.
  */
-const STORES_SKIP_TITLE_RELEVANCE = new Set<string>(["Çiçeksepeti"]);
+const STORES_SKIP_TITLE_RELEVANCE = new Set<string>(["Çiçeksepeti", "Hepsiburada"]);
 
 /**
  * Uzun sorgularda (4+ anlamlı parça) tüm kelimeleri başlıkta aramak ucuz/kısa ilanları düşürür;
@@ -75,6 +76,24 @@ export function filterProductsBySearchType(searchType: string | undefined, produ
     return products.filter((p) => !isLikelyLaptopAccessoryTitle(p.title));
   }
   return products;
+}
+
+/**
+ * API yanıtı için: başlık + kategori süzgeçleri birlikte tüm satırları silerse,
+ * ham mağaza sonuçlarını döndür (ekranda hiç veri kalmamasın).
+ */
+export function applyRelevanceFilters(
+  query: string,
+  searchType: string | undefined,
+  products: Product[]
+): Product[] {
+  if (products.length === 0) return [];
+  let relevant = filterProductsByQuery(query, products);
+  relevant = filterProductsBySearchType(searchType, relevant);
+  if (relevant.length === 0) {
+    return products;
+  }
+  return relevant;
 }
 
 /** Şarj, adaptör, kablo vb. — başlıkta "laptop" geçse bile genelde aksesuar. */

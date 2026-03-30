@@ -1,5 +1,9 @@
-import type { Product } from "../../shared/types.ts";
-import { parseTrPrice } from "../../shared/parsePrice";
+import type { Product } from "../../shared/types";
+import {
+  compareProductPriceAsc,
+  compareProductPriceDesc,
+  productNumericPrice,
+} from "../../shared/sortProducts";
 import "./style.css";
 
 /** Boş: geliştirmede Vite `/api` proxy; üretimde `VITE_API_BASE=https://api.example.com` (sonunda / yok). */
@@ -316,38 +320,11 @@ function formatTry(n: number): string {
   return new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY" }).format(n);
 }
 
-/** Sunucu sayı gönderir; NDJSON/string sapması veya TR formatı için parseTrPrice kullan. */
-function priceNum(p: Product): number {
-  const n = parseTrPrice(p.price as string | number | null | undefined);
-  return n ?? Number.NaN;
-}
-
-function comparePriceAsc(a: Product, b: Product): number {
-  const na = priceNum(a);
-  const nb = priceNum(b);
-  const aBad = Number.isNaN(na);
-  const bBad = Number.isNaN(nb);
-  if (aBad && bBad) return a.title.localeCompare(b.title, "tr") || a.store.localeCompare(b.store, "tr");
-  if (aBad) return 1;
-  if (bBad) return -1;
-  if (na !== nb) return na - nb;
-  return a.title.localeCompare(b.title, "tr") || a.store.localeCompare(b.store, "tr");
-}
-
-function comparePriceDesc(a: Product, b: Product): number {
-  const na = priceNum(a);
-  const nb = priceNum(b);
-  const aBad = Number.isNaN(na);
-  const bBad = Number.isNaN(nb);
-  if (aBad && bBad) return a.title.localeCompare(b.title, "tr") || a.store.localeCompare(b.store, "tr");
-  if (aBad) return 1;
-  if (bBad) return -1;
-  if (na !== nb) return nb - na;
-  return a.title.localeCompare(b.title, "tr") || a.store.localeCompare(b.store, "tr");
-}
+const priceNum = productNumericPrice;
 
 function setFiltersDisabled(on: boolean): void {
   filtersEl.querySelectorAll("input, select, button").forEach((el) => {
+    if (el instanceof HTMLInputElement && el.name === "filter-store") return;
     (el as HTMLInputElement | HTMLButtonElement).disabled = on;
   });
 }
@@ -374,12 +351,12 @@ function getSort(): SortOption {
 }
 
 function applyFilters(products: Product[]): Product[] {
-  const stores = getSelectedStores();
+  const stores = new Set([...getSelectedStores()].map((s) => s.trim()));
   const pmin = priceMinEl.value.trim() === "" ? null : Number(priceMinEl.value);
   const pmax = priceMaxEl.value.trim() === "" ? null : Number(priceMaxEl.value);
   const titleNeedle = titleFilterEl.value.trim().toLocaleLowerCase("tr");
 
-  let out = products.filter((p) => stores.has(p.store));
+  let out = products.filter((p) => stores.has(p.store.trim()));
 
   if (pmin != null && Number.isFinite(pmin)) {
     out = out.filter((p) => {
@@ -400,8 +377,8 @@ function applyFilters(products: Product[]): Product[] {
 
   const sort = getSort();
   out = [...out];
-  if (sort === "price-asc") out.sort(comparePriceAsc);
-  else if (sort === "price-desc") out.sort(comparePriceDesc);
+  if (sort === "price-asc") out.sort(compareProductPriceAsc);
+  else if (sort === "price-desc") out.sort(compareProductPriceDesc);
   else if (sort === "title-asc") out.sort((a, b) => a.title.localeCompare(b.title, "tr"));
   else out.sort((a, b) => a.store.localeCompare(b.store, "tr"));
 
@@ -622,53 +599,62 @@ form.addEventListener("submit", async (e) => {
     const dec = new TextDecoder();
     let buf = "";
 
+    type NdjsonMsg = {
+      type: string;
+      store?: string;
+      products?: Product[];
+      message?: string;
+      query?: string;
+      searchType?: string;
+    };
+
+    const processNdjsonLine = (trimmed: string): void => {
+      if (!trimmed) return;
+      let msg: NdjsonMsg;
+      try {
+        msg = JSON.parse(trimmed) as NdjsonMsg;
+      } catch {
+        return;
+      }
+      if (msg.type === "store" && Array.isArray(msg.products)) {
+        rawResults.push(...msg.products);
+        lastMeta = { query: q, searchType: typeLabel ?? typeRaw };
+        hint.textContent = `Sonuçlar geliyor… (${rawResults.length} ürün — mağazalar paralel sorgulanıyor)`;
+        renderErrors(errorsAcc.length ? errorsAcc : undefined);
+        renderTable();
+        return;
+      }
+      if (msg.type === "error" && msg.store && msg.message) {
+        errorsAcc.push({ store: msg.store, message: msg.message });
+        renderErrors(errorsAcc);
+        return;
+      }
+      if (msg.type === "done") {
+        lastMeta = {
+          query: msg.query ?? q,
+          searchType: getCategoryDisplayLabel() ?? msg.searchType,
+        };
+      }
+    };
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       buf += dec.decode(value, { stream: true });
       const lines = buf.split("\n");
       buf = lines.pop() ?? "";
-
       for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        let msg: { type: string; store?: string; products?: Product[]; message?: string; query?: string; searchType?: string };
-        try {
-          msg = JSON.parse(trimmed) as typeof msg;
-        } catch {
-          continue;
-        }
-
-        if (msg.type === "store" && msg.products) {
-          rawResults.push(...msg.products);
-          lastMeta = { query: q, searchType: typeLabel ?? typeRaw };
-          hint.textContent = `Sonuçlar geliyor… (${rawResults.length} ürün — mağazalar paralel sorgulanıyor)`;
-          renderErrors(errorsAcc.length ? errorsAcc : undefined);
-          renderTable();
-        } else if (msg.type === "error" && msg.store && msg.message) {
-          errorsAcc.push({ store: msg.store, message: msg.message });
-          renderErrors(errorsAcc);
-        } else if (msg.type === "done") {
-          lastMeta = {
-            query: msg.query ?? q,
-            searchType: getCategoryDisplayLabel() ?? msg.searchType,
-          };
-        }
+        processNdjsonLine(line.trim());
       }
     }
 
+    try {
+      buf += dec.decode();
+    } catch {
+      /* noop */
+    }
     if (buf.trim()) {
-      try {
-        const msg = JSON.parse(buf.trim()) as { type?: string; query?: string; searchType?: string };
-        if (msg.type === "done") {
-          lastMeta = {
-            query: msg.query ?? q,
-            searchType: getCategoryDisplayLabel() ?? msg.searchType,
-          };
-        }
-      } catch {
-        /* ignore */
-      }
+      processNdjsonLine(buf.trim());
     }
 
     renderErrors(errorsAcc.length ? errorsAcc : undefined);

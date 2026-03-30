@@ -2,7 +2,8 @@ import cors from "cors";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import type { Product, SearchResponse } from "../../shared/types.ts";
-import { filterProductsByQuery, filterProductsBySearchType } from "./relevance.ts";
+import { sortProductsByPriceAsc } from "./sortProducts.ts";
+import { applyRelevanceFilters } from "./relevance.ts";
 import { createStoreJobs } from "./storeJobs.ts";
 import { writeSearchNdjsonStream } from "./streamSearch.ts";
 
@@ -66,10 +67,6 @@ const limiter = rateLimit({
 app.use("/api/", limiter);
 app.use(express.json());
 
-function sortByPrice(a: Product, b: Product): number {
-  return a.price - b.price;
-}
-
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
@@ -107,9 +104,8 @@ app.get("/api/search", async (req, res) => {
     }
   });
 
-  let relevant = filterProductsByQuery(q, results);
-  relevant = filterProductsBySearchType(searchType, relevant);
-  relevant.sort(sortByPrice);
+  let relevant = applyRelevanceFilters(q, searchType, results);
+  relevant = sortProductsByPriceAsc(relevant);
 
   const body: SearchResponse = {
     query: q,

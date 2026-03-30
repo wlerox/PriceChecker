@@ -7,10 +7,12 @@
   ],
   "scripts": {
     "dev": "concurrently -k \"npm run dev -w tr-price-compare-server\" \"npm run dev -w tr-price-compare-client\"",
+    "dev:visible": "cross-env PLAYWRIGHT_VISIBLE=1 concurrently -k \"npm run dev -w tr-price-compare-server\" \"npm run dev -w tr-price-compare-client\"",
     "dev:server": "npm run dev --prefix server",
     "dev:client": "npm run dev --prefix client"
   },
   "devDependencies": {
-    "concurrently": "^9.1.0"
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3"
   }
 }

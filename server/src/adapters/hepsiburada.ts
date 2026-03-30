@@ -14,21 +14,25 @@ function isHbCaptchaPage(html: string): boolean {
   );
 }
 
+/** Sitedeki “artan fiyat” ile uyumlu liste; karşılaştırma için düşükten yükseğe. */
 async function fetchSearchHtml(query: string): Promise<string> {
   const q = encodeURIComponent(query.trim());
-  const searchUrl = `${BASE}/ara?q=${q}`;
+  const searchUrl = `${BASE}/ara?q=${q}&siralama=artanfiyat`;
+  if (process.env.HEPSIBURADA_DEBUG_URL === "1") {
+    console.log("[hepsiburada] searchUrl", searchUrl);
+  }
   const hbOpts = {
     referer: `${BASE}/`,
     origin: BASE,
     useHttp11: true as const,
-    timeoutSec: 35,
+    timeoutSec: 25,
   };
 
   const usePw = process.env.HEPSIBURADA_NO_PLAYWRIGHT !== "1";
 
   if (usePw) {
     try {
-      const html = await fetchHepsiburadaSearchHtmlWithPlaywright(searchUrl, `${BASE}/`);
+      const html = await fetchHepsiburadaSearchHtmlWithPlaywright(searchUrl, `${BASE}/`, query.trim());
       if (!isHbCaptchaPage(html)) {
         return html;
       }
@@ -56,14 +60,14 @@ function tryProductsFromNextData(html: string): Product[] {
     const data = JSON.parse(m[1] ?? "{}") as unknown;
     const found: Product[] = [];
     walkJsonForHbProducts(data, found, 0);
-    return dedupeByUrl(found).slice(0, 15);
+    return dedupeByUrl(found).slice(0, 24);
   } catch {
     return [];
   }
 }
 
 function walkJsonForHbProducts(data: unknown, out: Product[], depth: number): void {
-  if (depth > 14 || out.length >= 15) return;
+  if (depth > 14 || out.length >= 24) return;
   if (data == null || typeof data !== "object") return;
   if (Array.isArray(data)) {
     for (const item of data) {
@@ -94,7 +98,7 @@ function walkJsonForHbProducts(data: unknown, out: Product[], depth: number): vo
     typeof name === "string" &&
     url &&
     url.includes("hepsiburada") &&
-    url.includes("-p-") &&
+    (url.includes("-p-") || url.includes("pm-")) &&
     price != null &&
     price > 0
   ) {
@@ -115,12 +119,6 @@ function walkJsonForHbProducts(data: unknown, out: Product[], depth: number): vo
 export async function searchHepsiburada(query: string): Promise<Product[]> {
   const html = await fetchSearchHtml(query);
 
-  if (isHbCaptchaPage(html)) {
-    throw new Error(
-      "Hepsiburada güvenlik doğrulaması istiyor; otomatik arama bu ağdan engellenmiş olabilir. Tarayıcıda hepsiburada.com açıp doğrulama yapın veya farklı internet bağlantısı deneyin."
-    );
-  }
-
   let out = parseHbListHtml(html);
   if (out.length === 0) {
     out = tryProductsFromNextData(html);
@@ -129,58 +127,60 @@ export async function searchHepsiburada(query: string): Promise<Product[]> {
     out = parseJsonLd(cheerio.load(html));
   }
 
-  return dedupeByUrl(out).slice(0, 15);
+  // Captcha/ güvenlik sayfası olsa bile bazı isteklerde ürün kartları kısmen görünebiliyor.
+  // Bu yüzden önce parse deniyoruz; parse boş kalırsa ancak o zaman hataya düşüyoruz.
+  if (out.length === 0 && isHbCaptchaPage(html)) {
+    throw new Error(
+      "Hepsiburada güvenlik doğrulaması istiyor; otomatik arama bu ağdan engellenmiş olabilir. Tarayıcıda hepsiburada.com açıp doğrulama yapın veya farklı internet bağlantısı deneyin."
+    );
+  }
+
+  return dedupeByUrl(out).slice(0, 24);
 }
 
 function parseHbListHtml(html: string): Product[] {
   const $ = cheerio.load(html);
   const out: Product[] = [];
+  const seen = new Set<string>();
 
-  const linkSelector =
-    'a[href*="-p-"], [data-test-id="product-card"] a[href*="hepsiburada"], [data-testid="product-card"] a[href*="hepsiburada"]';
+  // Kart kökünden aşağı doğru: her kartta link, başlık, fiyat çıkar
+  $('[class*="productCard-module_productCardRoot"]').each((_, el) => {
+    if (out.length >= 24) return false;
+    const card = $(el);
 
-  $(linkSelector).each((_, el) => {
-    if (out.length >= 15) return false;
-    const a = $(el);
-    let href = a.attr("href") ?? "";
-    if (!href.includes("-p-")) return;
+    // Link: pm- veya -p- içeren ilk <a>
+    const linkEl = card.find('a[href*="pm-"], a[href*="-p-"]').first();
+    let href = linkEl.attr("href") ?? "";
+    if (!href) return;
     if (!href.startsWith("http")) href = BASE + (href.startsWith("/") ? href : `/${href}`);
+    const cleanUrl = href.split("?")[0];
+    if (seen.has(cleanUrl)) return;
+    seen.add(cleanUrl);
 
-    const card = a.closest(
-      '[data-test-id="product-card"], [data-testid="product-card"], [class*="product"], li, article, div'
-    );
+    // Başlık: data-test-id="title-X" içindeki <a title="..."> veya text
     let title =
-      card.find('[data-test-id="product-card-name"], [data-testid="product-name"]').first().text().trim() ||
-      card.find("h3, .product-title, [class*='product-name']").first().text().trim() ||
-      a.attr("title")?.trim() ||
-      a.text().trim();
+      card.find('[data-test-id^="title-"] a[title]').first().attr("title")?.trim() ||
+      card.find('[data-test-id^="title-"]').first().text().trim() ||
+      card.find("h2, h3").first().text().trim() ||
+      linkEl.attr("title")?.trim() ||
+      "";
     title = title.replace(/\s+/g, " ").trim();
 
+    // Fiyat: data-test-id="final-price-X" veya class finalPrice
     let priceText =
-      card.find('[data-test-id="price-current-price"], [data-testid="price-current"]').first().text() ||
-      card
-        .find('[class*="price"]')
-        .filter((_, node) => {
-          const t = $(node).text();
-          return t.includes("TL") || /\d/.test(t);
-        })
-        .first()
-        .text() ||
-      card.find(".price, [itemprop='price']").first().text();
-
-    if (!priceText) {
-      const scope = card.length ? card : a.parent();
-      priceText = scope.find('[data-test-id*="price"], [data-testid*="price"]').first().text();
-    }
+      card.find('[data-test-id^="final-price"]').first().text() ||
+      card.find('[class*="price-module_finalPrice"], [class*="finalPrice"]').first().text() ||
+      "";
 
     const price = parseTrPrice(priceText);
-    if (!title || price == null || href.includes("javascript")) return;
+    if (!title || price == null) return;
+
     out.push({
       store: "Hepsiburada",
       title: title.slice(0, 300),
       price,
       currency: "TRY",
-      url: href.split("?")[0],
+      url: cleanUrl,
     });
   });
 
@@ -195,7 +195,7 @@ function parseJsonLd($: cheerio.CheerioAPI): Product[] {
       const items = Array.isArray(json) ? json : [json];
       for (const item of items) {
         if (item["@type"] === "ItemList" && Array.isArray(item.itemListElement)) {
-          for (const it of item.itemListElement.slice(0, 15)) {
+          for (const it of item.itemListElement.slice(0, 24)) {
             const o = it.item ?? it;
             const name = o.name;
             const u = o.url;

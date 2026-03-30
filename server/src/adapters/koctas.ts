@@ -25,8 +25,10 @@ function parseFromJsonLd(html: string): Product[] {
         for (const item of itemList) {
           const node = (item as { item?: Record<string, unknown> }).item ?? (item as Record<string, unknown>);
           const title = String(node.name ?? "").trim();
+          const rawPrice =
+            (node.offers as { price?: unknown } | undefined)?.price ?? (node as { price?: unknown }).price;
           const price = parseTrPrice(
-            (node.offers as { price?: unknown } | undefined)?.price ?? (node as { price?: unknown }).price
+            typeof rawPrice === "string" || typeof rawPrice === "number" ? rawPrice : undefined
           );
           let url = String(node.url ?? "").trim();
           if (!url) continue;

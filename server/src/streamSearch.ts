@@ -1,11 +1,21 @@
 import type { Response } from "express";
 import type { Product } from "../../shared/types.ts";
-import { filterProductsByQuery, filterProductsBySearchType } from "./relevance.ts";
+import { sortProductsByPriceAsc } from "./sortProducts.ts";
+import { applyRelevanceFilters } from "./relevance.ts";
 import type { StoreJob } from "./storeJobs.ts";
 
 type StreamLineStore = { type: "store"; store: string; products: Product[] };
 type StreamLineError = { type: "error"; store: string; message: string };
 type StreamLineDone = { type: "done"; query: string; searchType?: string };
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_resolve, reject) => {
+      setTimeout(() => reject(new Error(`${label} timeout after ${ms}ms`)), ms);
+    }),
+  ]);
+}
 
 /**
  * Mağazalar paralel çalışır; her biri bitince NDJSON satırı yazılır (bekleme süresi = en yavaş mağaza,
@@ -22,12 +32,15 @@ export async function writeSearchNdjsonStream(
   res.setHeader("X-Accel-Buffering", "no");
 
   type Pending = { ok: true; products: Product[] } | { ok: false; message: string };
+  const perStoreTimeoutMsRaw = process.env.STREAM_PER_STORE_TIMEOUT_MS;
+  const perStoreTimeoutMs =
+    perStoreTimeoutMsRaw && perStoreTimeoutMsRaw !== "" ? Number(perStoreTimeoutMsRaw) : 90000;
 
   const pending = new Map<string, Promise<Pending>>();
   for (const job of jobs) {
     pending.set(
       job.name,
-      job.fn().then(
+      withTimeout(job.fn(), perStoreTimeoutMs, job.name).then(
         (products) => ({ ok: true as const, products }),
         (reason: unknown) => ({
           ok: false as const,
@@ -44,8 +57,8 @@ export async function writeSearchNdjsonStream(
     pending.delete(winner.name);
 
     if (winner.v.ok) {
-      let relevant = filterProductsByQuery(query, winner.v.products);
-      relevant = filterProductsBySearchType(searchType, relevant);
+      let relevant = applyRelevanceFilters(query, searchType, winner.v.products);
+      relevant = sortProductsByPriceAsc(relevant);
       const line: StreamLineStore = { type: "store", store: winner.name, products: relevant };
       res.write(JSON.stringify(line) + "\n");
     } else {

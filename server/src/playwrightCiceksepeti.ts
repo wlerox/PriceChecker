@@ -1,4 +1,9 @@
-import { chromium, type Browser } from "playwright";
+import type { Browser } from "playwright";
+import {
+  launchChromiumPreferInstalled,
+  playwrightHeadless,
+  tryLaunchInstalledChannel,
+} from "./playwrightLaunch.ts";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -116,45 +121,6 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-const LAUNCH_ARGS = [
-  "--disable-blink-features=AutomationControlled",
-  "--no-sandbox",
-  "--disable-setuid-sandbox",
-];
-
-type LaunchOpts = { channel?: "chrome" | "msedge"; headless: boolean };
-
-async function tryLaunch(o: LaunchOpts): Promise<Browser | null> {
-  try {
-    return await chromium.launch({
-      headless: o.headless,
-      ...(o.channel ? { channel: o.channel } : {}),
-      args: LAUNCH_ARGS,
-    });
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Sıra: Chrome → Edge (Win) → Playwright Chromium. Çoğu ortamda Chrome en iyi sonucu verir.
- */
-async function launchChromium(): Promise<Browser> {
-  const wantHeadless = process.env.PLAYWRIGHT_HEADLESS !== "0";
-  const skipChrome = process.env.PLAYWRIGHT_USE_CHROME === "0";
-  const skipEdge = process.env.PLAYWRIGHT_USE_EDGE === "0";
-
-  if (!skipChrome) {
-    const b = await tryLaunch({ channel: "chrome", headless: wantHeadless });
-    if (b) return b;
-  }
-  if (!skipEdge && process.platform === "win32") {
-    const b = await tryLaunch({ channel: "msedge", headless: wantHeadless });
-    if (b) return b;
-  }
-  return await chromium.launch({ headless: wantHeadless, args: LAUNCH_ARGS });
-}
-
 export type CiceksepetiScraped = { title: string; price: number; url: string };
 
 async function scrapeOnce(
@@ -213,10 +179,11 @@ export async function scrapeCiceksepetiListingPages(listingUrls: string[]): Prom
   const rawScroll = Number(process.env.PLAYWRIGHT_CICEK_SCROLL_MS);
   const scrollMs = Math.min(8000, Math.max(2000, Number.isFinite(rawScroll) && rawScroll > 0 ? rawScroll : 2800));
 
+  const wantHeadless = playwrightHeadless();
   const shouldRetryHeaded =
-    process.env.PLAYWRIGHT_CICEK_RETRY_HEADED !== "0" && process.env.PLAYWRIGHT_HEADLESS !== "0";
+    process.env.PLAYWRIGHT_CICEK_RETRY_HEADED !== "0" && wantHeadless;
 
-  let browser = await launchChromium();
+  let browser = await launchChromiumPreferInstalled(wantHeadless);
   try {
     const rows = await scrapeOnce(browser, listingUrls, scrollMs);
     if (rows.length > 0) return rows;
@@ -225,9 +192,12 @@ export async function scrapeCiceksepetiListingPages(listingUrls: string[]): Prom
   }
 
   if (shouldRetryHeaded) {
-    let headed: Browser | null = await tryLaunch({ channel: "chrome", headless: false });
-    if (!headed && process.platform === "win32" && process.env.PLAYWRIGHT_USE_EDGE !== "0") {
-      headed = await tryLaunch({ channel: "msedge", headless: false });
+    let headed: Browser | null =
+      process.env.PLAYWRIGHT_USE_CHROME === "0"
+        ? null
+        : await tryLaunchInstalledChannel(false, "chrome");
+    if (!headed && process.env.PLAYWRIGHT_USE_EDGE !== "0") {
+      headed = await tryLaunchInstalledChannel(false, "msedge");
     }
     if (headed) {
       try {
