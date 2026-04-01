@@ -40,11 +40,14 @@ function titleMatchesQueryTokens(foldedTitle: string, foldedTokens: string[]): b
   if (foldedTokens.length === 0) return true;
   const matched = foldedTokens.filter((tok) => {
     if (/\d/.test(tok)) {
-      // Sayısal model token'larında (5080, s24 vb.) alt model sızıntılarını azaltmak için sınır eşleşmesi kullan.
-      const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])${escapeRegExp(tok)}(?:$|[^\\p{L}\\p{N}])`, "u");
+      const esc = escapeRegExp(tok);
+      const isAllDigits = /^\d+$/.test(tok);
+      // "16" gibi salt sayısal tokenlarda sonrası harf olabilir (16e, 16 Pro) ama başka rakam olmamalı (160).
+      // "s24" gibi karışıklarda hem öncesi hem sonrasında alfanümerik olmayan sınır istenir.
+      const afterBound = isAllDigits ? `(?:$|[^\\d])` : `(?:$|[^\\p{L}\\p{N}])`;
+      const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])${esc}${afterBound}`, "u");
       if (re.test(foldedTitle)) return true;
-      // "RTX5050" gibi harf+rakam bitişik yazımlar
-      const glued = new RegExp(`\\p{L}${escapeRegExp(tok)}(?:$|[^\\d])`, "u");
+      const glued = new RegExp(`\\p{L}${esc}(?:$|[^\\d])`, "u");
       return glued.test(foldedTitle);
     }
     return foldedTitle.includes(tok);
@@ -63,7 +66,11 @@ export function filterProductsByQuery(query: string, products: Product[]): Produ
   const foldedTokens = tokens.map(foldForMatch);
   return products.filter((p) => {
     const t = foldForMatch(p.title);
-    return titleMatchesQueryTokens(t, foldedTokens);
+    const ok = titleMatchesQueryTokens(t, foldedTokens);
+    if (!ok) {
+      console.info(`[relevance] elendi: [${p.store}] "${p.title.slice(0, 80)}" | tokens=${foldedTokens.join(",")}`);
+    }
+    return ok;
   });
 }
 

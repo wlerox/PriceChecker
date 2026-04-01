@@ -7,6 +7,7 @@ const DEFAULT_ARGS = [
   "--no-sandbox",
   "--disable-setuid-sandbox",
   "--disable-dev-shm-usage",
+  "--lang=tr-TR",
 ];
 
 /** Sırayla denenen kanallar (Playwright, sistemde yüklü tarayıcıyı kullanır). */
@@ -15,7 +16,13 @@ const INSTALL_CHANNELS = ["chrome", "msedge"] as const;
 export type ChromiumLaunchExtras = { slowMo?: number };
 
 function launchOpts(headless: boolean, extras?: ChromiumLaunchExtras) {
-  return { headless, args: DEFAULT_ARGS, ...extras };
+  return {
+    headless,
+    args: DEFAULT_ARGS,
+    /** Playwright varsayılanı; açık bırakılınca siteler otomasyonu kolayca ayırt eder. */
+    ignoreDefaultArgs: ["--enable-automation"],
+    ...extras,
+  };
 }
 
 /**

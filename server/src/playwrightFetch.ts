@@ -1,17 +1,22 @@
 import { fetchTextCurl, type FetchTextCurlOptions } from "./curlFetch.ts";
 import { isFetchCurlVerboseLog, isFetchForcePlaywright } from "./config/fetchConfig.ts";
 import { launchChromiumPreferInstalled, playwrightHeadless } from "./playwrightLaunch.ts";
+import {
+  addPlaywrightFetchInitScripts,
+  playwrightFetchContextOptions,
+} from "./playwrightFetchContext.ts";
 
 export { isFetchForcePlaywright };
-
-const UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 export type FetchTextPlaywrightOptions = {
   referer?: string;
   timeoutMs?: number;
+  /** Ana ve referer `goto` için; Amazon gibi sitelerde `load` daha tutarlı. Varsayılan: domcontentloaded. */
+  pageGotoWaitUntil?: "domcontentloaded" | "load" | "commit";
   waitForAnySelectors?: string[];
   postLoadWaitMs?: number;
+  /** Amazon vb.: `networkidle` çoğu zaman tamamlanmaz veya zaman aşımına düşer; `true` iken bu adım atlanır. */
+  skipNetworkIdle?: boolean;
   /** Sonsuz kaydırmalı listeler: her turda ~bir ekran aşağı + kısa bekleme (0 = kapalı). */
   lazyScrollRounds?: number;
   /** Log satırında görünür: `[fetch:Vatan]` */
@@ -37,25 +42,24 @@ function curlVerbose(): boolean {
 
 export async function fetchTextPlaywright(url: string, options?: FetchTextPlaywrightOptions): Promise<string> {
   const timeoutMs = options?.timeoutMs ?? 45000;
+  const waitUntil = options?.pageGotoWaitUntil ?? "domcontentloaded";
   const t0 = Date.now();
   const label = options?.logLabel;
   const browser = await launchChromiumPreferInstalled(playwrightHeadless());
   try {
-    const context = await browser.newContext({
-      userAgent: UA,
-      locale: "tr-TR",
-      viewport: { width: 1366, height: 768 },
-      timezoneId: "Europe/Istanbul",
-    });
+    const context = await browser.newContext(playwrightFetchContextOptions());
+    await addPlaywrightFetchInitScripts(context);
     const page = await context.newPage();
 
     if (options?.referer) {
-      await page.goto(options.referer, { waitUntil: "domcontentloaded", timeout: timeoutMs }).catch(() => {});
-      await delay(400);
+      await page.goto(options.referer, { waitUntil, timeout: timeoutMs }).catch(() => {});
+      await delay(500);
     }
 
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
-    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+    await page.goto(url, { waitUntil, timeout: timeoutMs });
+    if (!options?.skipNetworkIdle) {
+      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+    }
 
     if (options?.waitForAnySelectors?.length) {
       await Promise.race(
