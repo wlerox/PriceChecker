@@ -1,8 +1,10 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
+import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
 import { fetchTextCurl } from "../curlFetch.ts";
 import { fetchKoctasSearchHtmlWithPlaywright } from "../playwrightKoctas.ts";
 import { parseTrPrice } from "../parsePrice.ts";
+import { takeCheapestProducts } from "../sortProducts.ts";
 
 const BASE = "https://www.koctas.com.tr";
 
@@ -10,7 +12,7 @@ function isBlockedPage(html: string): boolean {
   return /Access Denied|AkamaiGHost|errors\.edgesuite\.net/i.test(html);
 }
 
-function parseFromJsonLd(html: string): Product[] {
+function parseFromJsonLd(html: string, max: number): Product[] {
   const $ = cheerio.load(html);
   const out: Product[] = [];
   const seen = new Set<string>();
@@ -37,7 +39,7 @@ function parseFromJsonLd(html: string): Product[] {
           if (!title || price == null || seen.has(url)) continue;
           seen.add(url);
           out.push({ store: "Koçtaş", title: title.slice(0, 300), price, currency: "TRY", url });
-          if (out.length >= 15) return false;
+          if (out.length >= max) return false;
         }
       }
     } catch {
@@ -49,13 +51,13 @@ function parseFromJsonLd(html: string): Product[] {
   return out;
 }
 
-function parseFromCards(html: string): Product[] {
+function parseFromCards(html: string, max: number): Product[] {
   const $ = cheerio.load(html);
   const out: Product[] = [];
   const seen = new Set<string>();
 
   $("a[href*='/p/'], a[href*='/urun/']").each((_, el) => {
-    if (out.length >= 15) return false;
+    if (out.length >= max) return false;
     const a = $(el);
     const card = a.closest("article, li, div");
     let href = a.attr("href") ?? "";
@@ -86,6 +88,7 @@ function parseFromCards(html: string): Product[] {
 }
 
 export async function searchKoctas(query: string): Promise<Product[]> {
+  const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
   const url = `${BASE}/search?q=${q}`;
   const curlOpts = { referer: `${BASE}/`, origin: BASE, useHttp11: true as const, timeoutSec: 35 };
@@ -108,7 +111,7 @@ export async function searchKoctas(query: string): Promise<Product[]> {
     throw new Error("Koçtaş bu ağdan isteği engelledi (Access Denied / WAF).");
   }
 
-  const fromJsonLd = parseFromJsonLd(html);
-  if (fromJsonLd.length > 0) return fromJsonLd;
-  return parseFromCards(html).slice(0, 15);
+  const fromJsonLd = parseFromJsonLd(html, max);
+  if (fromJsonLd.length > 0) return takeCheapestProducts(fromJsonLd, max);
+  return takeCheapestProducts(parseFromCards(html, max), max);
 }

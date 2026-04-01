@@ -1,7 +1,9 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
-import { fetchTextCurl } from "../curlFetch.ts";
+import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
+import { fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
+import { takeCheapestProducts } from "../sortProducts.ts";
 
 const BASE = "https://www.n11.com";
 
@@ -81,12 +83,18 @@ function parseProductListFromHtml(html: string): Product[] {
 }
 
 export async function searchN11(query: string): Promise<Product[]> {
+  const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
   const merged: Product[] = [];
 
   for (let pg = 1; pg <= MAX_PAGES; pg++) {
     const url = `${BASE}/arama?q=${q}&pg=${pg}`;
-    const html = await fetchTextCurl(url);
+    const html = await fetchTextCurlThenPlaywright(
+      url,
+      { referer: `${BASE}/` },
+      { referer: `${BASE}/`, waitForAnySelectors: ['a.product-item[href*="/urun/"]'], postLoadWaitMs: 600 },
+      "N11"
+    );
     const page = parseProductListFromHtml(html);
     for (const p of page) {
       merged.push(p);
@@ -94,7 +102,7 @@ export async function searchN11(query: string): Promise<Product[]> {
     if (page.length === 0) break;
   }
 
-  return dedupeByUrl(merged);
+  return takeCheapestProducts(dedupeByUrl(merged), max);
 }
 
 function dedupeByUrl(items: Product[]): Product[] {

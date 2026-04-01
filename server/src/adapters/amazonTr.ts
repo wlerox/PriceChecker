@@ -1,20 +1,28 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
-import { fetchTextCurl } from "../curlFetch.ts";
+import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
+import { fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
+import { takeCheapestProducts } from "../sortProducts.ts";
 
 const BASE = "https://www.amazon.com.tr";
 
 export async function searchAmazonTr(query: string): Promise<Product[]> {
+  const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
   const url = `${BASE}/s?k=${q}`;
-  const html = await fetchTextCurl(url, { referer: `${BASE}/` });
+  const html = await fetchTextCurlThenPlaywright(
+    url,
+    { referer: `${BASE}/` },
+    { referer: `${BASE}/`, waitForAnySelectors: ['div[data-component-type="s-search-result"]'], postLoadWaitMs: 600 },
+    "Amazon TR"
+  );
   const $ = cheerio.load(html);
   const out: Product[] = [];
 
   // 2024+ arama sonucu: başlık artık h2 > a değil; data-asin + puis / title-recipe
   $('div[data-component-type="s-search-result"][data-asin]').each((_, el) => {
-    if (out.length >= 15) return false;
+    if (out.length >= max) return false;
     const block = $(el);
     const asin = block.attr("data-asin")?.trim() ?? "";
     if (!asin || asin.length < 5) return;
@@ -51,7 +59,7 @@ export async function searchAmazonTr(query: string): Promise<Product[]> {
     });
   });
 
-  return dedupeByUrl(out);
+  return takeCheapestProducts(dedupeByUrl(out), max);
 }
 
 function dedupeByUrl(items: Product[]): Product[] {

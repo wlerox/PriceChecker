@@ -1,0 +1,21 @@
+{
+  "aciklamalar": {
+    "FETCH_CONFIG_PATH": "İsteğe bağlı: Bu JSON dosyasının tam yolu. Boşsa sırayla ./config/fetch.json ve ./server/config/fetch.json aranır.",
+    "forcePlaywright": "true ise curl ile HTTP isteği yapılmaz; mağaza aramaları doğrudan Playwright (gerçek tarayıcı) ile yapılır. Ortam: FETCH_FORCE_PLAYWRIGHT veya FORCE_BROWSER_FETCH (1/true/yes). Ortam değişkeni bu dosyadaki değeri geçersiz kılar.",
+    "curlVerboseLog": "true ise curl başarılı olduğunda da konsola byte ve süre yazar. Ortam: FETCH_HTTP_LOG=1 veya FETCH_LOG=1 (bunlardan biri 1 ise açılır).",
+    "playwrightVisible": "true ise tarayıcı penceresi görünür (headed). Ortam: PLAYWRIGHT_VISIBLE, PLAYWRIGHT_HEADED, PLAYWRIGHT_HEADLESS önce uygulanır.",
+    "playwrightBundledChromiumOnly": "true ise yalnızca Playwright ile gelen paket Chromium kullanılır (Docker/CI). Ortam: PLAYWRIGHT_USE_BUNDLED_CHROMIUM=1 önceliklidir.",
+    "playwrightChannel": "Boş değilse tek kanal zorunlu: chrome veya msedge. Ortam: PLAYWRIGHT_CHANNEL önceliklidir.",
+    "playwrightUseChrome": "true: yalnızca Chrome dene; false: Chrome’u atlama listesine al; null: varsayılan sıra. Ortam: PLAYWRIGHT_USE_CHROME önceliklidir.",
+    "playwrightUseEdge": "false: Edge’i atlama listesine al; null: varsayılan. Ortam: PLAYWRIGHT_USE_EDGE önceliklidir.",
+    "maxProductsPerStore": "Her mağaza için en fazla kaç ürün adayı (sorgu ile eşleşenler arasından fiyata göre en ucuz N). 1 yapınca ilgili mağaza araması yeterli aday bulunca mümkün olan yerlerde erken biter. Ortam: FETCH_MAX_PRODUCTS_PER_STORE (öncelikli)."
+  },
+  "forcePlaywright": true,
+  "curlVerboseLog": false,
+  "playwrightVisible": true,
+  "playwrightBundledChromiumOnly": false,
+  "playwrightChannel": "",
+  "playwrightUseChrome": null,
+  "playwrightUseEdge": null,
+  "maxProductsPerStore": 1
+}

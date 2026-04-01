@@ -19,8 +19,12 @@ test("geçersiz", () => {
   assert.equal(parseTrPrice("abc"), null);
 });
 
-test("aynı metinde küçük ve büyük tutar — ana fiyat (yüksek) seçilir", () => {
+test("aynı metinde küçük ve büyük tutar — küçük tutar anlamlı değilse yüksek kalır", () => {
   assert.equal(parseTrPrice("15,00 TL 12.595,50 TL"), 12595.5);
+});
+
+test("iki yakın yüksek tutar — indirimli (düşük) seçilir", () => {
+  assert.equal(parseTrPrice("15.860,00 TL Sepette 15.699,99 TL"), 15699.99);
 });
 
 test("çoklu tutarda anlamlı olan (>=100) tercih", () => {

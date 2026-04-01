@@ -1,7 +1,9 @@
 import type { Product } from "../../../shared/types.ts";
 import { parseCiceksepetiListingHtml } from "../ciceksepetiHtml.ts";
+import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
 import { fetchTextCurl } from "../curlFetch.ts";
 import { scrapeCiceksepetiListingPages } from "../playwrightCiceksepeti.ts";
+import { takeCheapestProducts } from "../sortProducts.ts";
 
 const SITE = "https://www.ciceksepeti.com";
 const SUGGEST_API = "https://cs-web.ciceksepeti.com/store/api/v1/suggests/ch/search";
@@ -33,6 +35,7 @@ async function resolveSuggestPath(query: string): Promise<string | null> {
 }
 
 export async function searchCiceksepeti(query: string): Promise<Product[]> {
+  const max = getMaxProductsPerStore();
   const q = query.trim();
   if (!q) return [];
 
@@ -59,22 +62,28 @@ export async function searchCiceksepeti(query: string): Promise<Product[]> {
     if (html.length < 800) continue;
     const parsed = parseCiceksepetiListingHtml(html);
     if (parsed.length > 0) {
-      return parsed.map((r) => ({
-        store: "Çiçeksepeti",
-        title: r.title,
-        price: r.price,
-        currency: "TRY",
-        url: r.url,
-      }));
+      return takeCheapestProducts(
+        parsed.map((r) => ({
+          store: "Çiçeksepeti",
+          title: r.title,
+          price: r.price,
+          currency: "TRY",
+          url: r.url,
+        })),
+        max
+      );
     }
   }
 
   const scraped = await scrapeCiceksepetiListingPages(urls);
-  return scraped.map((r) => ({
-    store: "Çiçeksepeti",
-    title: r.title,
-    price: r.price,
-    currency: "TRY",
-    url: r.url,
-  }));
+  return takeCheapestProducts(
+    scraped.map((r) => ({
+      store: "Çiçeksepeti",
+      title: r.title,
+      price: r.price,
+      currency: "TRY",
+      url: r.url,
+    })),
+    max
+  );
 }

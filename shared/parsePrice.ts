@@ -24,14 +24,18 @@ function amountsTurkishFormat(s: string): number[] {
 }
 
 /**
- * Aynı satırda küçük taksit/indirim tutarı ile ana fiyat birlikte gelince
- * (örn. 15,00 ve 12.595,50) daha büyük ve tipik satış tutarını alır.
+ * Birden fazla tutarda: uzak büyüklüklerde (taksit + ana fiyat) yüksek olanı;
+ * birbirine yakın iki yüksek tutarda (liste + indirimli) düşük olanı (güncel fiyat) alır.
  */
 function pickPrimaryAmount(amounts: number[]): number | null {
   if (!amounts.length) return null;
   const significant = amounts.filter((a) => a >= 100);
-  if (significant.length) return Math.max(...significant);
-  return Math.max(...amounts);
+  if (!significant.length) return Math.max(...amounts);
+  if (significant.length === 1) return significant[0];
+  const min = Math.min(...significant);
+  const max = Math.max(...significant);
+  if (min >= 500 && max / min <= 1.4) return min;
+  return max;
 }
 
 function legacySinglePass(s: string): number | null {

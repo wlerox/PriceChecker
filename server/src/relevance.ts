@@ -42,7 +42,10 @@ function titleMatchesQueryTokens(foldedTitle: string, foldedTokens: string[]): b
     if (/\d/.test(tok)) {
       // Sayısal model token'larında (5080, s24 vb.) alt model sızıntılarını azaltmak için sınır eşleşmesi kullan.
       const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])${escapeRegExp(tok)}(?:$|[^\\p{L}\\p{N}])`, "u");
-      return re.test(foldedTitle);
+      if (re.test(foldedTitle)) return true;
+      // "RTX5050" gibi harf+rakam bitişik yazımlar
+      const glued = new RegExp(`\\p{L}${escapeRegExp(tok)}(?:$|[^\\d])`, "u");
+      return glued.test(foldedTitle);
     }
     return foldedTitle.includes(tok);
   }).length;

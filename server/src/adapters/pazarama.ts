@@ -1,20 +1,28 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
-import { fetchTextCurl } from "../curlFetch.ts";
+import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
+import { fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
+import { takeCheapestProducts } from "../sortProducts.ts";
 
 const BASE = "https://www.pazarama.com";
 
 export async function searchPazarama(query: string): Promise<Product[]> {
+  const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
   const url = `${BASE}/arama?q=${q}`;
-  const html = await fetchTextCurl(url, { referer: `${BASE}/`, origin: BASE, useHttp11: true, timeoutSec: 35 });
+  const html = await fetchTextCurlThenPlaywright(
+    url,
+    { referer: `${BASE}/`, origin: BASE, useHttp11: true, timeoutSec: 35 },
+    { referer: `${BASE}/`, waitForAnySelectors: ['[data-testid="listing-product-card-grid"]'], postLoadWaitMs: 600 },
+    "Pazarama"
+  );
   const $ = cheerio.load(html);
   const out: Product[] = [];
   const seen = new Set<string>();
 
   $('[data-testid="listing-product-card-grid"]').each((_, el) => {
-    if (out.length >= 15) return false;
+    if (out.length >= max) return false;
     const card = $(el);
     const a = card.find('a[href*="-p-"]').first();
     let href = a.attr("href") ?? "";
@@ -40,5 +48,5 @@ export async function searchPazarama(query: string): Promise<Product[]> {
     });
   });
 
-  return out;
+  return takeCheapestProducts(out, max);
 }

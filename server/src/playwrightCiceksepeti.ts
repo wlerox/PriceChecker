@@ -1,4 +1,5 @@
 import type { Browser } from "playwright";
+import { getMaxProductsPerStore } from "./config/fetchConfig.ts";
 import {
   launchChromiumPreferInstalled,
   playwrightHeadless,
@@ -11,7 +12,8 @@ const UA =
 const HOME = "https://www.ciceksepeti.com/";
 
 /** Playwright string evaluate = tek ifade; IIFE. Liste kartı: data-cs-pb-name / fiyat span’ları. */
-const EXTRACT_PRODUCTS_JS = `(function () {
+function buildCiceksepetiExtractScript(max: number): string {
+  return `(function () {
   function parseTrAmount(chunk) {
     var cleaned = chunk.replace(/\\./g, "").replace(",", ".");
     var n = parseFloat(cleaned);
@@ -65,7 +67,7 @@ const EXTRACT_PRODUCTS_JS = `(function () {
   var seen = {};
   var boxes = document.querySelectorAll("a[data-cs-product-box]");
   var bi;
-  for (bi = 0; bi < boxes.length && out.length < 15; bi++) {
+  for (bi = 0; bi < boxes.length && out.length < ${max}; bi++) {
     var box = boxes[bi];
     var href = box.getAttribute("href") || "";
     if (!isProductHref(href)) continue;
@@ -90,7 +92,7 @@ const EXTRACT_PRODUCTS_JS = `(function () {
   }
   if (out.length > 0) return out;
   var anchors = document.querySelectorAll('a[href*="kc"]');
-  for (var i = 0; i < anchors.length && out.length < 15; i++) {
+  for (var i = 0; i < anchors.length && out.length < ${max}; i++) {
     var a = anchors[i];
     href = a.getAttribute("href") || "";
     if (!isProductHref(href)) continue;
@@ -116,6 +118,7 @@ const EXTRACT_PRODUCTS_JS = `(function () {
   }
   return out;
 })()`;
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -126,7 +129,8 @@ export type CiceksepetiScraped = { title: string; price: number; url: string };
 async function scrapeOnce(
   browser: Browser,
   listingUrls: string[],
-  scrollDelayMs: number
+  scrollDelayMs: number,
+  maxProducts: number
 ): Promise<CiceksepetiScraped[]> {
   const context = await browser.newContext({
     userAgent: UA,
@@ -165,7 +169,9 @@ async function scrapeOnce(
       await page.evaluate(() => window.scrollTo(0, 4000));
       await delay(scrollDelayMs);
 
-      const batch = (await page.evaluate(EXTRACT_PRODUCTS_JS)) as CiceksepetiScraped[] | undefined;
+      const batch = (await page.evaluate(buildCiceksepetiExtractScript(maxProducts))) as
+        | CiceksepetiScraped[]
+        | undefined;
       if (Array.isArray(batch) && batch.length > 0) return batch;
     }
 
@@ -176,6 +182,7 @@ async function scrapeOnce(
 }
 
 export async function scrapeCiceksepetiListingPages(listingUrls: string[]): Promise<CiceksepetiScraped[]> {
+  const maxProducts = getMaxProductsPerStore();
   const rawScroll = Number(process.env.PLAYWRIGHT_CICEK_SCROLL_MS);
   const scrollMs = Math.min(8000, Math.max(2000, Number.isFinite(rawScroll) && rawScroll > 0 ? rawScroll : 2800));
 
@@ -185,7 +192,7 @@ export async function scrapeCiceksepetiListingPages(listingUrls: string[]): Prom
 
   let browser = await launchChromiumPreferInstalled(wantHeadless);
   try {
-    const rows = await scrapeOnce(browser, listingUrls, scrollMs);
+    const rows = await scrapeOnce(browser, listingUrls, scrollMs, maxProducts);
     if (rows.length > 0) return rows;
   } finally {
     await browser.close();
@@ -201,7 +208,7 @@ export async function scrapeCiceksepetiListingPages(listingUrls: string[]): Prom
     }
     if (headed) {
       try {
-        const rows = await scrapeOnce(headed, listingUrls, scrollMs);
+        const rows = await scrapeOnce(headed, listingUrls, scrollMs, maxProducts);
         if (rows.length > 0) return rows;
       } finally {
         await headed.close();

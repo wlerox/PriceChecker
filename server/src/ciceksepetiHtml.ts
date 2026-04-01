@@ -1,4 +1,5 @@
 import * as cheerio from "cheerio";
+import { getMaxProductsPerStore } from "./config/fetchConfig.ts";
 import { parseTrPrice } from "./parsePrice.ts";
 
 const SITE = "https://www.ciceksepeti.com";
@@ -16,6 +17,7 @@ function normalizeHref(href: string): string {
  * Başlık ve fiyat, karttaki `data-cs-pb-*` işaretlerinden okunur (güncel liste şablonu).
  */
 export function parseCiceksepetiListingHtml(html: string): { title: string; price: number; url: string }[] {
+  const max = getMaxProductsPerStore();
   const $ = cheerio.load(html);
   const seen = new Set<string>();
   const out: { title: string; price: number; url: string }[] = [];
@@ -23,7 +25,7 @@ export function parseCiceksepetiListingHtml(html: string): { title: string; pric
   const boxes = $("a[data-cs-product-box]");
   if (boxes.length > 0) {
     boxes.each((_, el) => {
-      if (out.length >= 15) return false;
+      if (out.length >= max) return false;
       const $box = $(el);
       const href = ($box.attr("href") || "").trim();
       if (!PRODUCT_HREF.test(href)) return;
@@ -54,7 +56,7 @@ export function parseCiceksepetiListingHtml(html: string): { title: string; pric
 
   /** Eski / farklı şablon: yalnızca ürün linki + metin */
   $("a[href]").each((_, el) => {
-    if (out.length >= 15) return false;
+    if (out.length >= max) return false;
     const $a = $(el);
     let href = ($a.attr("href") || "").trim();
     if (!PRODUCT_HREF.test(href)) return;

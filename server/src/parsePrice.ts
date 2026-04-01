@@ -26,8 +26,13 @@ function amountsTurkishFormat(s: string): number[] {
 function pickPrimaryAmount(amounts: number[]): number | null {
   if (!amounts.length) return null;
   const significant = amounts.filter((a) => a >= 100);
-  if (significant.length) return Math.max(...significant);
-  return Math.max(...amounts);
+  if (!significant.length) return Math.max(...amounts);
+  if (significant.length === 1) return significant[0];
+  const min = Math.min(...significant);
+  const max = Math.max(...significant);
+  // İki büyük tutar yakınsa (liste + indirimli): düşük olan güncel fiyat. Uzak tutarlar (15 TL + 12.595 TL) için yüksek kalır.
+  if (min >= 500 && max / min <= 1.4) return min;
+  return max;
 }
 
 function legacySinglePass(s: string): number | null {

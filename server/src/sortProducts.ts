@@ -23,3 +23,9 @@ export function compareProductPriceAsc(a: Product, b: Product): number {
 export function sortProductsByPriceAsc(products: Product[]): Product[] {
   return [...products].sort(compareProductPriceAsc);
 }
+
+/** Fiyata göre artan sıra; en fazla `max` ürün (mağaza başı limit için). */
+export function takeCheapestProducts(products: Product[], max: number): Product[] {
+  if (max <= 0) return [];
+  return sortProductsByPriceAsc(products).slice(0, max);
+}

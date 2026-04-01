@@ -1,26 +1,28 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
-import { fetchTextCurl } from "../curlFetch.ts";
+import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
+import { fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
+import { takeCheapestProducts } from "../sortProducts.ts";
 
 const BASE = "https://www.pttavm.com";
 
-function productsFromJsonLd($: cheerio.CheerioAPI): Product[] {
+function productsFromJsonLd($: cheerio.CheerioAPI, max: number): Product[] {
   const out: Product[] = [];
   $('script[type="application/ld+json"]').each((_, el) => {
-    if (out.length >= 15) return false;
+    if (out.length >= max) return false;
     try {
       const raw = $(el).html();
       if (!raw) return;
       const json = JSON.parse(raw) as unknown;
       const items = Array.isArray(json) ? json : [json];
       for (const node of items) {
-        if (out.length >= 15) break;
+        if (out.length >= max) break;
         if (!node || typeof node !== "object") continue;
         const o = node as Record<string, unknown>;
         if (o["@type"] !== "ItemList" || !Array.isArray(o.itemListElement)) continue;
-        for (const it of o.itemListElement.slice(0, 20)) {
-          if (out.length >= 15) break;
+        for (const it of o.itemListElement.slice(0, Math.min(20, max))) {
+          if (out.length >= max) break;
           const li = it as Record<string, unknown>;
           const item = (li.item ?? li) as Record<string, unknown> | string;
           if (!item || typeof item !== "object") continue;
@@ -53,13 +55,13 @@ function productsFromJsonLd($: cheerio.CheerioAPI): Product[] {
   return out;
 }
 
-function productsFromCards(html: string): Product[] {
+function productsFromCards(html: string, max: number): Product[] {
   const $ = cheerio.load(html);
   const out: Product[] = [];
   const seen = new Set<string>();
 
   $('article.article__i36EQ a.card__dfYph[href*="-p-"]').each((_, el) => {
-    if (out.length >= 15) return false;
+    if (out.length >= max) return false;
     const a = $(el);
     let href = a.attr("href") ?? "";
     if (!href.includes("-p-")) return;
@@ -90,17 +92,23 @@ function productsFromCards(html: string): Product[] {
 }
 
 export async function searchPttAvm(query: string): Promise<Product[]> {
+  const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
   const url = `${BASE}/arama?q=${q}`;
-  const html = await fetchTextCurl(url, { referer: `${BASE}/`, origin: BASE, useHttp11: true, timeoutSec: 35 });
+  const html = await fetchTextCurlThenPlaywright(
+    url,
+    { referer: `${BASE}/`, origin: BASE, useHttp11: true, timeoutSec: 35 },
+    { referer: `${BASE}/`, waitForAnySelectors: ['a[href*="-p-"]', 'script[type="application/ld+json"]'], postLoadWaitMs: 600 },
+    "PTT Avm"
+  );
   const $ = cheerio.load(html);
 
-  let out = productsFromJsonLd($);
+  let out = productsFromJsonLd($, max);
   if (out.length === 0) {
-    out = productsFromCards(html);
+    out = productsFromCards(html, max);
   }
 
-  return dedupeByUrl(out).slice(0, 15);
+  return takeCheapestProducts(dedupeByUrl(out), max);
 }
 
 function dedupeByUrl(items: Product[]): Product[] {

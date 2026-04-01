@@ -1,8 +1,10 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
+import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
 import { fetchHepsiburadaSearchHtmlWithPlaywright } from "../playwrightHb.ts";
 import { fetchTextCurl, fetchTextCurlWithSession } from "../curlFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
+import { takeCheapestProducts } from "../sortProducts.ts";
 
 const BASE = "https://www.hepsiburada.com";
 
@@ -53,25 +55,25 @@ async function fetchSearchHtml(query: string): Promise<string> {
   return fetchTextCurl(searchUrl, hbOpts);
 }
 
-function tryProductsFromNextData(html: string): Product[] {
+function tryProductsFromNextData(html: string, max: number): Product[] {
   const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/i);
   if (!m) return [];
   try {
     const data = JSON.parse(m[1] ?? "{}") as unknown;
     const found: Product[] = [];
-    walkJsonForHbProducts(data, found, 0);
-    return dedupeByUrl(found).slice(0, 24);
+    walkJsonForHbProducts(data, found, 0, max);
+    return takeCheapestProducts(dedupeByUrl(found), max);
   } catch {
     return [];
   }
 }
 
-function walkJsonForHbProducts(data: unknown, out: Product[], depth: number): void {
-  if (depth > 14 || out.length >= 24) return;
+function walkJsonForHbProducts(data: unknown, out: Product[], depth: number, max: number): void {
+  if (depth > 14 || out.length >= max) return;
   if (data == null || typeof data !== "object") return;
   if (Array.isArray(data)) {
     for (const item of data) {
-      walkJsonForHbProducts(item, out, depth + 1);
+      walkJsonForHbProducts(item, out, depth + 1, max);
     }
     return;
   }
@@ -112,19 +114,20 @@ function walkJsonForHbProducts(data: unknown, out: Product[], depth: number): vo
   }
 
   for (const k of Object.keys(o)) {
-    walkJsonForHbProducts(o[k], out, depth + 1);
+    walkJsonForHbProducts(o[k], out, depth + 1, max);
   }
 }
 
 export async function searchHepsiburada(query: string): Promise<Product[]> {
+  const max = getMaxProductsPerStore();
   const html = await fetchSearchHtml(query);
 
-  let out = parseHbListHtml(html);
+  let out = parseHbListHtml(html, max);
   if (out.length === 0) {
-    out = tryProductsFromNextData(html);
+    out = tryProductsFromNextData(html, max);
   }
   if (out.length === 0) {
-    out = parseJsonLd(cheerio.load(html));
+    out = parseJsonLd(cheerio.load(html), max);
   }
 
   // Captcha/ güvenlik sayfası olsa bile bazı isteklerde ürün kartları kısmen görünebiliyor.
@@ -135,17 +138,17 @@ export async function searchHepsiburada(query: string): Promise<Product[]> {
     );
   }
 
-  return dedupeByUrl(out).slice(0, 24);
+  return takeCheapestProducts(dedupeByUrl(out), max);
 }
 
-function parseHbListHtml(html: string): Product[] {
+function parseHbListHtml(html: string, max: number): Product[] {
   const $ = cheerio.load(html);
   const out: Product[] = [];
   const seen = new Set<string>();
 
   // Kart kökünden aşağı doğru: her kartta link, başlık, fiyat çıkar
   $('[class*="productCard-module_productCardRoot"]').each((_, el) => {
-    if (out.length >= 24) return false;
+    if (out.length >= max) return false;
     const card = $(el);
 
     // Link: pm- veya -p- içeren ilk <a>
@@ -187,7 +190,7 @@ function parseHbListHtml(html: string): Product[] {
   return out;
 }
 
-function parseJsonLd($: cheerio.CheerioAPI): Product[] {
+function parseJsonLd($: cheerio.CheerioAPI, max: number): Product[] {
   const out: Product[] = [];
   $('script[type="application/ld+json"]').each((_, el) => {
     try {
@@ -195,7 +198,8 @@ function parseJsonLd($: cheerio.CheerioAPI): Product[] {
       const items = Array.isArray(json) ? json : [json];
       for (const item of items) {
         if (item["@type"] === "ItemList" && Array.isArray(item.itemListElement)) {
-          for (const it of item.itemListElement.slice(0, 24)) {
+          for (const it of item.itemListElement) {
+            if (out.length >= max) break;
             const o = it.item ?? it;
             const name = o.name;
             const u = o.url;

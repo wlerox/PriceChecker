@@ -1,7 +1,10 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
+import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
 import { fetchTextCurl, fetchTextCurlWithSession } from "../curlFetch.ts";
+import { fetchTextPlaywright, isFetchForcePlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
+import { takeCheapestProducts } from "../sortProducts.ts";
 
 const BASE = "https://www.vatanbilgisayar.com";
 
@@ -43,7 +46,7 @@ function slugCandidates(query: string): string[] {
   return out;
 }
 
-function parseVatanHtml(html: string): Product[] {
+function parseVatanHtml(html: string, max: number): Product[] {
   const $ = cheerio.load(html);
   const out: Product[] = [];
   const seen = new Set<string>();
@@ -55,7 +58,7 @@ function parseVatanHtml(html: string): Product[] {
     : $("#product-list-container").find(".product-list.product-list--list-page");
 
   $rows.each((_, el) => {
-    if (out.length >= 15) return false;
+    if (out.length >= max) return false;
     const row = $(el);
     const link = row.find("a.product-list-link").first();
     let href = link.attr("href") ?? "";
@@ -99,6 +102,7 @@ function buildListUrl(keywordPath: string, categorySeg: string | undefined): str
  * @param typeHint — İstemciden `type` (örn. "Ekran kartı"); Vatan kategori URL’sine çevrilir.
  */
 export async function searchVatan(query: string, typeHint?: string): Promise<Product[]> {
+  const max = getMaxProductsPerStore();
   const slugs = slugCandidates(query);
   if (!slugs.length) return [];
 
@@ -113,18 +117,38 @@ export async function searchVatan(query: string, typeHint?: string): Promise<Pro
     }
     attempts.push(buildListUrl(pathSeg, undefined));
 
+    const vatanPwOpts = {
+      referer: `${BASE}/`,
+      waitForAnySelectors: [".product-list.product-list--list-page", ".product-list__product-name"] as string[],
+      postLoadWaitMs: 700,
+      logLabel: "Vatan",
+    };
+
     for (let j = 0; j < attempts.length; j++) {
       const url = attempts[j];
-      try {
-        const html =
-          i === 0 && j === 0
-            ? await fetchTextCurlWithSession(url, `${BASE}/`, curlOpts)
-            : await fetchTextCurl(url, curlOpts);
-        const parsed = parseVatanHtml(html);
-        if (parsed.length > 0) return parsed;
-      } catch {
-        continue;
+      let html = "";
+      if (isFetchForcePlaywright()) {
+        try {
+          html = await fetchTextPlaywright(url, { ...vatanPwOpts });
+        } catch {
+          continue;
+        }
+      } else {
+        try {
+          html =
+            i === 0 && j === 0
+              ? await fetchTextCurlWithSession(url, `${BASE}/`, curlOpts)
+              : await fetchTextCurl(url, curlOpts);
+        } catch {
+          try {
+            html = await fetchTextPlaywright(url, { ...vatanPwOpts });
+          } catch {
+            continue;
+          }
+        }
       }
+      const parsed = parseVatanHtml(html, max);
+      if (parsed.length > 0) return takeCheapestProducts(parsed, max);
     }
   }
 

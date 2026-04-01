@@ -22,6 +22,12 @@ test("rtx 5080 hem rtx hem 5080 ister", () => {
   assert.ok(out[0].title.includes("5080"));
 });
 
+test("rtx 5050 bitişik RTX5050 başlıkta eşleşir", () => {
+  const out = filterProductsByQuery("rtx 5050", [p("Palit GeForce RTX5050 8GB"), p("RTX 5060 8GB")]);
+  assert.equal(out.length, 1);
+  assert.ok(out[0].title.includes("5050"));
+});
+
 test("tek kelime", () => {
   const out = filterProductsByQuery("kulaklık", [p("Bluetooth kulaklık JBL"), p("Mouse kablosuz")]);
   assert.equal(out.length, 1);
