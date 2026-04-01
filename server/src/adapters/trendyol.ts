@@ -219,7 +219,6 @@ export async function searchTrendyol(query: string): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim().toLocaleLowerCase("tr"));
   const byUrl = new Map<string, Product>();
-  const seenJsonUrl = new Set<string>();
 
   const browser = await launchChromiumPreferInstalled(playwrightHeadless());
 
@@ -232,46 +231,20 @@ export async function searchTrendyol(query: string): Promise<Product[]> {
     });
     const page = await context.newPage();
 
-    page.on("response", async (response) => {
-      try {
-        const u = response.url();
-        if (!/trendyol\.com/i.test(u)) return;
-        const ct = (response.headers()["content-type"] ?? "").toLowerCase();
-        if (!ct.includes("json")) return;
-        if (response.status() !== 200) return;
-        const text = await response.text();
-        if (text.length < 40 || text.length > 6_000_000) return;
-        const head = text.slice(0, 60_000);
-        if (!/discountedPrice|salePrice|productId|"name"|listing|content|-p-/i.test(head)) return;
-
-        const data = JSON.parse(text) as unknown;
-        const batch: Product[] = [];
-        collectProductsFromJson(data, 0, batch, seenJsonUrl);
-        for (const p of batch) {
-          byUrl.set(p.url, p);
-        }
-      } catch {
-        /* ignore */
-      }
-    });
-
     await page.goto(`${BASE}/`, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
     await delay(250);
 
     for (let pi = 1; pi <= MAX_PAGES; pi++) {
       const searchUrl = `${BASE}/sr?q=${q}&${SORT_PRICE_ASC}&pi=${pi}`;
       await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
-      await page.waitForLoadState("networkidle", { timeout: 18000 }).catch(() => {});
+      await page.waitForLoadState("networkidle", { timeout: 6000 }).catch(() => {});
       await Promise.race([
-        page.waitForSelector('[data-testid="product-card"]', { timeout: 8000 }),
-        page.waitForSelector('a[href*="-p-"]', { timeout: 8000 }),
+        page.waitForSelector('[data-testid="product-card"]', { timeout: 4000 }),
+        page.waitForSelector('a[href*="-p-"]', { timeout: 4000 }),
       ]).catch(() => {});
-      await delay(500);
-      for (let i = 0; i < 2; i++) {
-        await page.evaluate(() => window.scrollBy(0, Math.floor(window.innerHeight * 0.85)));
-        await delay(280);
-      }
-      await delay(400);
+      await delay(200);
+      await page.evaluate(() => window.scrollBy(0, Math.floor(window.innerHeight * 0.7))).catch(() => {});
+      await delay(160);
 
       const html = await page.content();
       const $ = cheerio.load(html);
