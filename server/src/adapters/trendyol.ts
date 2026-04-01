@@ -9,14 +9,22 @@ const BASE = "https://www.trendyol.com";
 
 /** Fiyat artan sıralama: ucuz ama alakasız ürünleri `filterProductsByQuery` eliyor. */
 const SORT_PRICE_ASC = "sst=PRICE_BY_ASC";
-/** Taranacak sayfa sayısı üst sınırı. Yeterli ürün bulunursa erken durur. */
-const MAX_PAGES = 8;
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** `streamSearch` ile aynı ortam değişkeni ve varsayılan: sayfa döngüsü bu süre dolunca durur. */
+function trendyolBudgetMs(): number {
+  const raw = process.env.STREAM_PER_STORE_TIMEOUT_MS?.trim();
+  if (raw && raw !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  }
+  return 90_000;
 }
 
 function collectPriceText($: cheerio.CheerioAPI, card: cheerio.Cheerio<any>): string {
@@ -212,13 +220,15 @@ function collectProductsFromJson(value: unknown, depth: number, out: Product[], 
 }
 
 /**
- * Tek Playwright oturumu: JSON yanıtları + her `pi` sayfası için HTML parse.
- * `pi` olmadan yalnızca 1. sayfa gelir; ürün 5. sayfadaysa `&pi=5` ile açılmalı.
+ * Tek Playwright oturumu: her `pi` sayfası için HTML parse.
+ * Sayfa sınırı yok; `STREAM_PER_STORE_TIMEOUT_MS` (varsayılan 90s) dolana kadar devam eder.
  */
 export async function searchTrendyol(query: string): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim().toLocaleLowerCase("tr"));
   const byUrl = new Map<string, Product>();
+  const budgetMs = trendyolBudgetMs();
+  const t0 = Date.now();
 
   const browser = await launchChromiumPreferInstalled(playwrightHeadless());
 
@@ -234,7 +244,10 @@ export async function searchTrendyol(query: string): Promise<Product[]> {
     await page.goto(`${BASE}/`, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
     await delay(250);
 
-    for (let pi = 1; pi <= MAX_PAGES; pi++) {
+    let pi = 0;
+    while (true) {
+      if (Date.now() - t0 >= budgetMs) break;
+      pi += 1;
       const searchUrl = `${BASE}/sr?q=${q}&${SORT_PRICE_ASC}&pi=${pi}`;
       await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
       await page.waitForLoadState("networkidle", { timeout: 6000 }).catch(() => {});
