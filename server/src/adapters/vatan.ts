@@ -91,7 +91,7 @@ function parseVatanHtml(html: string, max: number): Product[] {
 }
 
 function buildListUrl(keywordPath: string, categorySeg: string | undefined): string {
-  const sort = "srt=UP";
+  const sort = "srt=UP&stk=true";
   const basePath = categorySeg
     ? `/arama/${keywordPath}/${categorySeg.replace(/^\/|\/$/g, "")}/`
     : `/arama/${keywordPath}/`;
