@@ -94,7 +94,7 @@ function productsFromCards(html: string, max: number): Product[] {
 export async function searchPttAvm(query: string): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
-  const url = `${BASE}/arama?q=${q}`;
+  const url = `${BASE}/arama?order=price_asc&q=${q}`;
   const html = await fetchTextCurlThenPlaywright(
     url,
     { referer: `${BASE}/`, origin: BASE, useHttp11: true, timeoutSec: 35 },

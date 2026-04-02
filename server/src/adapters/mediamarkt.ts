@@ -4,6 +4,7 @@ import type { Product } from "../../../shared/types.ts";
 import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
 import { fetchMediaMarktSearchHtmlWithPlaywright } from "../playwrightMediaMarkt.ts";
 import { parseTrPrice } from "../parsePrice.ts";
+import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
 
 const BASE = "https://www.mediamarkt.com.tr";
@@ -75,13 +76,12 @@ function priceTextFromMmsPrice($: cheerio.CheerioAPI, card: cheerio.Cheerio<Elem
   return block.text().replace(/\s+/g, " ").trim();
 }
 
-function parseMediaMarktHtml(html: string, max: number): Product[] {
+function parseMediaMarktHtml(html: string): Product[] {
   const $ = cheerio.load(html);
   const out: Product[] = [];
   const seen = new Set<string>();
 
   $('[data-test="mms-product-card"]').each((_, el) => {
-    if (out.length >= max) return false;
     const card = $(el);
 
     const link = card.find('a[href*="/product/"]').first();
@@ -119,12 +119,15 @@ export async function searchMediaMarkt(query: string): Promise<Product[]> {
   if (process.env.MEDIAMARKT_NO_PLAYWRIGHT === "1") return [];
 
   const max = getMaxProductsPerStore();
+  const parseLimit = max * 5;
   const q = encodeURIComponent(query.trim());
-  const searchUrl = `${BASE}/tr/search.html?query=${q}`;
+  const searchUrl = `${BASE}/tr/search.html?query=${q}&sort=currentprice+asc`;
 
   try {
-    const html = await fetchMediaMarktSearchHtmlWithPlaywright(searchUrl);
-    return takeCheapestProducts(parseMediaMarktHtml(html, max), max);
+    const html = await fetchMediaMarktSearchHtmlWithPlaywright(searchUrl, parseLimit);
+    const all = parseMediaMarktHtml(html);
+    const relevant = filterProductsByQuery(query, all);
+    return takeCheapestProducts(relevant, max);
   } catch {
     return [];
   }
