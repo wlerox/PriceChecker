@@ -2,15 +2,21 @@ import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
 import { fetchTextCurl } from "../curlFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
+import { filterProductsByQuery } from "../relevance.ts";
 
 const BASE = "https://www.n11.com";
 
-/**
- * Varsayılan sıralamada ucuz dizüstü (ör. 103.999 TL) 2. sayfada olabiliyor; tek sayfa yetersiz.
- * PRICE_LOW kullanma: tüm aksesuarlar üstte kalır ve dizüstü filtresinde sonuç kalmaz.
- */
-const MAX_PAGES = 4;
+const DEFAULT_MAX = 3;
 const PER_PAGE_CAP = 28;
+
+function n11BudgetMs(): number {
+  const raw = process.env.STREAM_PER_STORE_TIMEOUT_MS?.trim();
+  if (raw && raw !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  }
+  return 90_000;
+}
 
 function parseProductListFromHtml(html: string): Product[] {
   const $ = cheerio.load(html);
@@ -81,20 +87,33 @@ function parseProductListFromHtml(html: string): Product[] {
 }
 
 export async function searchN11(query: string): Promise<Product[]> {
+  const max = DEFAULT_MAX;
   const q = encodeURIComponent(query.trim());
   const merged: Product[] = [];
+  const budgetMs = n11BudgetMs();
+  const t0 = Date.now();
 
-  for (let pg = 1; pg <= MAX_PAGES; pg++) {
-    const url = `${BASE}/arama?q=${q}&pg=${pg}`;
+  let pg = 0;
+  while (true) {
+    if (Date.now() - t0 >= budgetMs) break;
+    pg += 1;
+
+    const url = `${BASE}/arama?q=${q}&srt=PRICE_LOW&pg=${pg}`;
     const html = await fetchTextCurl(url);
     const page = parseProductListFromHtml(html);
     for (const p of page) {
       merged.push(p);
     }
     if (page.length === 0) break;
+
+    const relevant = filterProductsByQuery(query, dedupeByUrl(merged));
+    if (relevant.length >= max) break;
   }
 
-  return dedupeByUrl(merged);
+  const unique = dedupeByUrl(merged);
+  const relevant = filterProductsByQuery(query, unique);
+  relevant.sort((a, b) => a.price - b.price);
+  return relevant.slice(0, max);
 }
 
 function dedupeByUrl(items: Product[]): Product[] {

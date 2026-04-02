@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { chromium } from "playwright";
-import type { BrowserContext } from "playwright";
+import type { BrowserContext, Page } from "playwright";
 import { getFetchConfig } from "./config/fetchConfig.ts";
 import { PLAYWRIGHT_FETCH_UA } from "./playwrightFetchContext.ts";
 import { playwrightHeadless } from "./playwrightLaunch.ts";
@@ -92,8 +92,6 @@ const STEALTH_INIT = `
     });
   } catch {}
   if (!window.chrome) window.chrome = { runtime: {} };
-
-  // Playwright başlık çubuğunu gizler; bazı kontroller buna bakıyor
   try {
     Object.defineProperty(navigator, 'plugins', {
       get: () => [1, 2, 3, 4, 5],
@@ -101,17 +99,40 @@ const STEALTH_INIT = `
   } catch {}
 `;
 
+async function scrollPage(page: Page): Promise<void> {
+  for (let i = 0; i < 5; i++) {
+    await page.evaluate(() => window.scrollBy(0, Math.floor(window.innerHeight * 0.8)));
+    await delay(400 + Math.random() * 300);
+  }
+  await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
+  await delay(200);
+}
+
+async function waitForResults(page: Page): Promise<void> {
+  await Promise.race([
+    page.waitForSelector('div[data-component-type="s-search-result"]', { timeout: 15_000 }),
+    page.waitForSelector("#search", { timeout: 15_000 }),
+  ]).catch(() => {});
+  await delay(800 + Math.random() * 400);
+}
+
 /**
- * Amazon TR için kalıcı profilli Playwright oturumu.
- * Çerezler / localStorage istekler arasında kalır → sonraki aramalar daha az bot gibi görünür.
+ * Amazon TR arama — kalıcı profil, sayfalama destekli.
+ *
+ * `hasEnough(html)` callback'i her sayfa HTML'i için çağrılır.
+ * `true` dönerse veya `timeoutMs` aşılırsa durur (sayfa limiti yok).
+ * Toplanan tüm sayfa HTML'lerini birleşik döndürür.
  */
-export async function fetchAmazonWithPersistentBrowser(
-  searchUrl: string,
+export async function fetchAmazonWithPaging(
+  firstPageUrl: string,
+  hasEnough: (combinedHtml: string, pageNum: number) => boolean,
+  _maxPages: number = Infinity,
   timeoutMs = 55_000,
 ): Promise<string> {
   const headless = playwrightHeadless();
   const context = await launchPersistent(headless);
   const t0 = Date.now();
+  const htmlParts: string[] = [];
 
   try {
     await context.addInitScript(STEALTH_INIT);
@@ -121,33 +142,62 @@ export async function fetchAmazonWithPersistentBrowser(
       waitUntil: "domcontentloaded",
       timeout: timeoutMs,
     });
-    await delay(800 + Math.random() * 600);
+    await delay(600 + Math.random() * 400);
 
-    await page.goto(searchUrl, { waitUntil: "load", timeout: timeoutMs });
+    await page.goto(firstPageUrl, { waitUntil: "load", timeout: timeoutMs });
+    await waitForResults(page);
+    await scrollPage(page);
 
-    await Promise.race([
-      page.waitForSelector('div[data-component-type="s-search-result"]', { timeout: 15_000 }),
-      page.waitForSelector("#search", { timeout: 15_000 }),
-    ]).catch(() => {});
+    const firstHtml = await page.content();
+    htmlParts.push(firstHtml);
+    const elapsed = () => Date.now() - t0;
+    console.info(`[fetch:Amazon TR] sayfa 1 ok | bytes=${firstHtml.length} | ${elapsed()}ms`);
 
-    await delay(1000 + Math.random() * 400);
-
-    for (let i = 0; i < 5; i++) {
-      await page.evaluate(() => window.scrollBy(0, Math.floor(window.innerHeight * 0.8)));
-      await delay(500 + Math.random() * 300);
+    if (hasEnough(firstHtml, 1)) {
+      return htmlParts.join("\n");
     }
-    await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
-    await delay(300);
 
-    const html = await page.content();
-    const ms = Date.now() - t0;
-    console.info(`[fetch:Amazon TR] persistent-browser ok | bytes=${html.length} | ${ms}ms`);
-    return html;
+    for (let pg = 2; ; pg++) {
+      if (elapsed() > timeoutMs - 5000) {
+        console.info(`[fetch:Amazon TR] timeout yaklaştı (${elapsed()}ms), sayfalama durdu`);
+        break;
+      }
+
+      const nextLink = await page.$('a.s-pagination-next:not(.s-pagination-disabled)');
+      if (!nextLink) {
+        console.info(`[fetch:Amazon TR] sonraki sayfa linki yok, sayfalama durdu`);
+        break;
+      }
+
+      await nextLink.click();
+      await page.waitForLoadState("load", { timeout: 20_000 }).catch(() => {});
+      await waitForResults(page);
+      await scrollPage(page);
+
+      const pageHtml = await page.content();
+      htmlParts.push(pageHtml);
+      const combined = htmlParts.join("\n");
+      console.info(`[fetch:Amazon TR] sayfa ${pg} ok | bytes=${pageHtml.length} | toplam=${combined.length} | ${elapsed()}ms`);
+
+      if (hasEnough(combined, pg)) break;
+    }
+
+    return htmlParts.join("\n");
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error(`[fetch:Amazon TR] persistent-browser error | ${msg}`);
+    if (htmlParts.length > 0) {
+      console.warn(`[fetch:Amazon TR] sayfalamada hata ama ${htmlParts.length} sayfa toplandı | ${(e as Error).message}`);
+      return htmlParts.join("\n");
+    }
     throw e;
   } finally {
     await context.close();
   }
+}
+
+/** Geriye dönük uyumluluk: tek sayfa fetch. */
+export async function fetchAmazonWithPersistentBrowser(
+  searchUrl: string,
+  timeoutMs = 55_000,
+): Promise<string> {
+  return fetchAmazonWithPaging(searchUrl, () => true, 1, timeoutMs);
 }

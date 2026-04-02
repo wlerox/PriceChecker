@@ -3,12 +3,17 @@ import type { Product } from "../../../shared/types.ts";
 import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
 import { fetchTextCurl } from "../curlFetch.ts";
 import { isFetchForcePlaywright } from "../playwrightFetch.ts";
-import { fetchAmazonWithPersistentBrowser } from "../playwrightAmazon.ts";
+import { fetchAmazonWithPaging } from "../playwrightAmazon.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
 import { foldForMatch, filterProductsByQuery } from "../relevance.ts";
 
 const BASE = "https://www.amazon.com.tr";
+const TIMEOUT_MS = 55_000;
+
+function isAmazonErrorPage(html: string): boolean {
+  return /\u00DCzg\u00FCn\u00FCz|Sorry!.*problem/i.test(html) && !hasAmazonSearchGrid(html);
+}
 
 function hasAmazonSearchGrid(html: string): boolean {
   return (
@@ -17,60 +22,17 @@ function hasAmazonSearchGrid(html: string): boolean {
   );
 }
 
-function isAmazonErrorPage(html: string): boolean {
-  const errorPattern = /\u00DCzg\u00FCn\u00FCz|Sorry!.*problem/i;
-  return errorPattern.test(html) && !hasAmazonSearchGrid(html);
-}
-
-async function fetchAmazonSearchHtml(url: string): Promise<string> {
-  if (!isFetchForcePlaywright()) {
-    try {
-      const curlHtml = await fetchTextCurl(url, { referer: `${BASE}/` });
-      if (curlHtml && curlHtml.length > 200 && hasAmazonSearchGrid(curlHtml) && !isAmazonErrorPage(curlHtml)) {
-        return curlHtml;
-      }
-      if (isAmazonErrorPage(curlHtml)) {
-        console.warn("[fetch:Amazon TR] curl → Üzgünüz hata sayfası → persistent browser");
-      } else {
-        console.warn("[fetch:Amazon TR] curl → arama ızgarası yok → persistent browser");
-      }
-    } catch {
-      console.warn("[fetch:Amazon TR] curl başarısız → persistent browser");
-    }
-  }
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const html = await fetchAmazonWithPersistentBrowser(url);
-      if (hasAmazonSearchGrid(html) && !isAmazonErrorPage(html)) return html;
-      if (isAmazonErrorPage(html)) {
-        console.warn(`[fetch:Amazon TR] persistent browser (${attempt + 1}/2) → Üzgünüz hata sayfası`);
-      } else {
-        console.warn(`[fetch:Amazon TR] persistent browser (${attempt + 1}/2) → arama ızgarası yok`);
-      }
-      if (attempt === 0) await new Promise((r) => setTimeout(r, 2000 + Math.random() * 1000));
-    } catch (e) {
-      if (attempt === 1) throw e;
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-  }
-
-  throw new Error("Amazon TR arama sayfası yüklenemedi (bot algılandı veya site hatası)");
-}
-
 /** "15.740,01 TL" — TL zorunlu; yıldız puanı gibi sahte eşleşmeleri önler. */
 const TR_PRICE_WITH_TL_RE = /\d{1,3}(?:\.\d{3})*,\d{2}\s*TL/gi;
 
 function minPriceFromAmazonBlock($: cheerio.CheerioAPI, block: cheerio.Cheerio<any>): number | null {
   const nums: number[] = [];
 
-  // 1) Standart fiyat kartı (.a-price .a-offscreen)
   block.find(".a-price .a-offscreen").each((_, priceEl) => {
     const n = parseTrPrice($(priceEl).text());
     if (n != null && n > 0) nums.push(n);
   });
 
-  // 2) price-recipe fallback
   if (!nums.length) {
     const priceText =
       block.find('[data-cy="price-recipe"] .a-offscreen').first().text() ||
@@ -79,7 +41,6 @@ function minPriceFromAmazonBlock($: cheerio.CheerioAPI, block: cheerio.Cheerio<a
     if (n != null && n > 0) nums.push(n);
   }
 
-  // 3) a-price-whole / a-price-fraction
   if (!nums.length) {
     const priceWhole = block.find(".a-price-whole").first().text().replace(/\./g, "").trim();
     const priceFrac = block.find(".a-price-fraction").first().text().trim();
@@ -90,8 +51,6 @@ function minPriceFromAmazonBlock($: cheerio.CheerioAPI, block: cheerio.Cheerio<a
     }
   }
 
-  // 4) "Öne çıkan teklif yok / 15.740,01 TL (2 yeni ürün)" — .a-price yok, düz metin.
-  //    TL zorunlu; "4,65" gibi yıldız puanları eşleşmesin.
   if (!nums.length) {
     const blockText = block.text();
     let m: RegExpExecArray | null;
@@ -105,17 +64,11 @@ function minPriceFromAmazonBlock($: cheerio.CheerioAPI, block: cheerio.Cheerio<a
   return nums.length ? Math.min(...nums) : null;
 }
 
-export async function searchAmazonTr(query: string): Promise<Product[]> {
-  const max = getMaxProductsPerStore();
-  const q = encodeURIComponent(query.trim()).replace(/%20/g, "+");
-  const url = `${BASE}/s?k=${q}&s=price-asc-rank`;
-  const html = await fetchAmazonSearchHtml(url);
+function parseProductsFromHtml(html: string): Product[] {
   const $ = cheerio.load(html);
   const out: Product[] = [];
-  const rawCap = Math.min(100, Math.max(40, max * 25));
 
   $('div[data-component-type="s-search-result"][data-asin]').each((_, el) => {
-    if (out.length >= rawCap) return false;
     const block = $(el);
     const asin = block.attr("data-asin")?.trim() ?? "";
     if (!asin || asin.length < 5) return;
@@ -140,11 +93,7 @@ export async function searchAmazonTr(query: string): Promise<Product[]> {
     });
   });
 
-  const deduped = dedupeByUrl(out);
-  const relevant = filterProductsByQuery(query, deduped);
-  const result = pickBestAmazonProducts(relevant, max);
-  console.info(`[Amazon TR] parse: ${deduped.length} aday → sorgu eşleşen ${relevant.length} → seçilen ${result.length} (max=${max})`);
-  return result;
+  return out;
 }
 
 const ACCESSORY_WORDS = [
@@ -160,10 +109,6 @@ function isLikelyAccessory(title: string): boolean {
   return ACCESSORY_WORDS.some((w) => f.includes(foldForMatch(w)));
 }
 
-/**
- * Aksesuar olmayan ürünlere öncelik ver; yetersizse aksesuarla tamamla.
- * Her iki grupta da fiyata göre en ucuzlar alınır.
- */
 function pickBestAmazonProducts(products: Product[], max: number): Product[] {
   const main: Product[] = [];
   const accessory: Product[] = [];
@@ -185,4 +130,58 @@ function dedupeByUrl(items: Product[]): Product[] {
     seen.add(x.url);
     return true;
   });
+}
+
+function evaluateProducts(html: string, query: string, max: number) {
+  const all = dedupeByUrl(parseProductsFromHtml(html));
+  const relevant = filterProductsByQuery(query, all);
+  const good = relevant.filter((p) => !isLikelyAccessory(p.title));
+  return { all, relevant, good };
+}
+
+export async function searchAmazonTr(query: string): Promise<Product[]> {
+  const max = getMaxProductsPerStore();
+  const q = encodeURIComponent(query.trim()).replace(/%20/g, "+");
+  const url = `${BASE}/s?k=${q}&s=price-asc-rank`;
+
+  // 1) Önce curl dene — hızlı (~1-2 sn)
+  if (!isFetchForcePlaywright()) {
+    try {
+      const curlHtml = await fetchTextCurl(url, { referer: `${BASE}/` });
+      if (curlHtml && curlHtml.length > 200 && hasAmazonSearchGrid(curlHtml) && !isAmazonErrorPage(curlHtml)) {
+        const { all, relevant, good } = evaluateProducts(curlHtml, query, max);
+        if (good.length >= max) {
+          const result = pickBestAmazonProducts(relevant, max);
+          console.info(`[Amazon TR] curl ok → ${all.length} aday, ${relevant.length} eşleşen, ${good.length} ana ürün → seçilen ${result.length}`);
+          return result;
+        }
+        console.info(`[Amazon TR] curl ok ama yetersiz (${good.length}/${max} ana ürün) → tarayıcı ile sayfalama`);
+      } else {
+        console.warn(`[Amazon TR] curl → ızgara yok veya hata sayfası → tarayıcı ile sayfalama`);
+      }
+    } catch {
+      console.warn(`[Amazon TR] curl başarısız → tarayıcı ile sayfalama`);
+    }
+  }
+
+  // 2) Playwright ile sayfalama — yeterli ürün veya timeout'a kadar
+  const html = await fetchAmazonWithPaging(
+    url,
+    (combinedHtml, pageNum) => {
+      const { all, relevant, good } = evaluateProducts(combinedHtml, query, max);
+      console.info(`[Amazon TR] sayfa ${pageNum} → ${all.length} aday, ${relevant.length} eşleşen, ${good.length} ana ürün (hedef=${max})`);
+      return good.length >= max;
+    },
+    Infinity,
+    TIMEOUT_MS,
+  );
+
+  if (isAmazonErrorPage(html)) {
+    throw new Error("Amazon TR arama sayfası yüklenemedi (bot algılandı veya site hatası)");
+  }
+
+  const { all, relevant } = evaluateProducts(html, query, max);
+  const result = pickBestAmazonProducts(relevant, max);
+  console.info(`[Amazon TR] toplam: ${all.length} aday → sorgu eşleşen ${relevant.length} → seçilen ${result.length} (max=${max})`);
+  return result;
 }
