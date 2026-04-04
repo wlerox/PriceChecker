@@ -1,3 +1,4 @@
+import type { Browser } from "playwright";
 import { launchChromiumPreferInstalled, playwrightHeadless } from "./playwrightLaunch.ts";
 
 const UA =
@@ -7,36 +8,53 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+let _browser: Browser | null = null;
+
+async function getSharedBrowser(): Promise<Browser> {
+  if (_browser?.isConnected()) return _browser;
+  _browser = await launchChromiumPreferInstalled(playwrightHeadless());
+  _browser.on("disconnected", () => {
+    _browser = null;
+  });
+  return _browser;
+}
+
 /**
- * Gerçek Chromium ile Koçtaş arama HTML'i (WAF / bot engelinde curl yerine).
+ * Singleton Chromium ile Koçtaş arama HTML'i.
+ * Tarayıcı bir kere açılır, sonraki aramalarda aynı instance kullanılır.
  */
-export async function fetchKoctasSearchHtmlWithPlaywright(searchUrl: string, homeUrl: string): Promise<string> {
-  const browser = await launchChromiumPreferInstalled(playwrightHeadless());
+export async function fetchKoctasSearchHtmlWithPlaywright(searchUrl: string): Promise<string> {
+  const browser = await getSharedBrowser();
+
+  const context = await browser.newContext({
+    userAgent: UA,
+    locale: "tr-TR",
+    viewport: { width: 1366, height: 768 },
+    timezoneId: "Europe/Istanbul",
+  });
 
   try {
-    const context = await browser.newContext({
-      userAgent: UA,
-      locale: "tr-TR",
-      viewport: { width: 1366, height: 768 },
-      timezoneId: "Europe/Istanbul",
-    });
-
     const page = await context.newPage();
 
-    await page.goto(homeUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
-    await delay(700);
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "webdriver", { get: () => false });
+    });
 
-    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
-    await page.waitForLoadState("networkidle", { timeout: 25000 }).catch(() => {});
+    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
+
     await Promise.race([
-      page.waitForSelector('a[href*="/p/"]', { timeout: 30000 }),
-      page.waitForSelector('a[href*="/urun/"]', { timeout: 30000 }),
-      page.waitForSelector('script[type="application/ld+json"]', { timeout: 30000 }),
+      page.waitForSelector('a[href*="/p/"]', { timeout: 12_000 }),
+      page.waitForSelector('script[type="application/ld+json"]', { timeout: 12_000 }),
     ]).catch(() => {});
 
-    await delay(500);
+    for (let i = 0; i < 2; i++) {
+      await page.evaluate(() => window.scrollBy(0, Math.floor(window.innerHeight * 0.8)));
+      await delay(400);
+    }
+
+    await delay(300);
     return await page.content();
   } finally {
-    await browser.close();
+    await context.close();
   }
 }

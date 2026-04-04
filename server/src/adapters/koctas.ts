@@ -2,8 +2,10 @@ import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
 import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
 import { fetchTextCurl } from "../curlFetch.ts";
+import { isFetchForcePlaywright } from "../playwrightFetch.ts";
 import { fetchKoctasSearchHtmlWithPlaywright } from "../playwrightKoctas.ts";
 import { parseTrPrice } from "../parsePrice.ts";
+import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
 
 const BASE = "https://www.koctas.com.tr";
@@ -68,7 +70,7 @@ function parseFromCards(html: string, max: number): Product[] {
 
     const title =
       a.attr("title")?.trim() ||
-      card.find("h2, h3, [class*='title'], [class*='name']").first().text().trim() ||
+      card.find("h2, h3, h4, [class*='title'], [class*='name']").first().text().trim() ||
       a.text().trim();
     const priceText = card.find("[class*='price'], [data-testid*='price']").first().text();
     const price = parseTrPrice(priceText);
@@ -90,28 +92,41 @@ function parseFromCards(html: string, max: number): Product[] {
 export async function searchKoctas(query: string): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
-  const url = `${BASE}/search?q=${q}`;
-  const curlOpts = { referer: `${BASE}/`, origin: BASE, useHttp11: true as const, timeoutSec: 35 };
+  const url = `${BASE}/search?q=${q}&sort=price-asc`;
+  const curlOpts = { referer: `${BASE}/`, origin: BASE, useHttp11: true as const, timeoutSec: 20 };
 
   let html = "";
-  const usePw = process.env.KOCTAS_NO_PLAYWRIGHT !== "1";
-  if (usePw) {
+
+  if (!isFetchForcePlaywright()) {
     try {
-      html = await fetchKoctasSearchHtmlWithPlaywright(url, `${BASE}/`);
-    } catch {
-      /* curl fallback */
+      html = await fetchTextCurl(url, curlOpts);
+    } catch (e) {
+      console.warn(`[fetch:Koçtaş] curl failed → playwright | ${(e as Error).message}`);
     }
   }
 
-  if (!html) {
-    html = await fetchTextCurl(url, curlOpts);
+  if (!html || html.length <= 20 || isBlockedPage(html)) {
+    const reason = isBlockedPage(html) ? "WAF block" : "empty/short";
+    console.info(`[fetch:Koçtaş] curl ${reason} → playwright fallback`);
+    html = await fetchKoctasSearchHtmlWithPlaywright(url);
   }
 
   if (isBlockedPage(html)) {
     throw new Error("Koçtaş bu ağdan isteği engelledi (Access Denied / WAF).");
   }
 
-  const fromJsonLd = parseFromJsonLd(html, max);
-  if (fromJsonLd.length > 0) return takeCheapestProducts(fromJsonLd, max);
-  return takeCheapestProducts(parseFromCards(html, max), max);
+  const fromJsonLd = parseFromJsonLd(html, max * 3);
+  const fromCards = parseFromCards(html, max * 3);
+
+  const seen = new Set(fromJsonLd.map((p) => p.url));
+  const merged = [...fromJsonLd];
+  for (const c of fromCards) {
+    if (!seen.has(c.url)) {
+      seen.add(c.url);
+      merged.push(c);
+    }
+  }
+
+  const relevant = filterProductsByQuery(query, merged);
+  return takeCheapestProducts(relevant.length > 0 ? relevant : merged, max);
 }
