@@ -2,17 +2,38 @@ import type { Product } from "../../../shared/types.ts";
 import { parseCiceksepetiListingHtml } from "../ciceksepetiHtml.ts";
 import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
 import { fetchTextCurl } from "../curlFetch.ts";
+import { isFetchForcePlaywright } from "../playwrightFetch.ts";
 import { scrapeCiceksepetiListingPages } from "../playwrightCiceksepeti.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
 
 const SITE = "https://www.ciceksepeti.com";
 const SUGGEST_API = "https://cs-web.ciceksepeti.com/store/api/v1/suggests/ch/search";
 
-async function resolveSuggestPath(query: string): Promise<string | null> {
-  const kw = encodeURIComponent(query.trim());
-  let json: string;
+/** orderby=3 → en düşük fiyat sıralaması */
+const SORT_PRICE_ASC = "choice=1&orderby=3";
+
+function appendSort(url: string): string {
+  return url + (url.includes("?") ? "&" : "?") + SORT_PRICE_ASC;
+}
+
+async function fetchSuggestJson(keywordUrl: string): Promise<string | null> {
+  if (isFetchForcePlaywright()) {
+    try {
+      const res = await fetch(keywordUrl, {
+        headers: {
+          accept: "application/json, text/plain, */*",
+          referer: `${SITE}/`,
+          origin: SITE,
+        },
+      });
+      if (!res.ok) return null;
+      return await res.text();
+    } catch {
+      return null;
+    }
+  }
   try {
-    json = await fetchTextCurl(`${SUGGEST_API}?keyword=${kw}`, {
+    return await fetchTextCurl(keywordUrl, {
       referer: `${SITE}/`,
       origin: SITE,
       accept: "application/json, text/plain, */*",
@@ -22,6 +43,12 @@ async function resolveSuggestPath(query: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+async function resolveSuggestPath(query: string): Promise<string | null> {
+  const kw = encodeURIComponent(query.trim());
+  const json = await fetchSuggestJson(`${SUGGEST_API}?keyword=${kw}`);
+  if (json == null) return null;
   try {
     const data = JSON.parse(json) as { suggestItems?: { link: string; type?: number }[] };
     const items = data.suggestItems ?? [];
@@ -41,37 +68,40 @@ export async function searchCiceksepeti(query: string): Promise<Product[]> {
 
   const suggestPath = await resolveSuggestPath(q);
   const urls: string[] = [];
-  if (suggestPath) urls.push(`${SITE}${suggestPath.startsWith("/") ? suggestPath : `/${suggestPath}`}`);
-  urls.push(`${SITE}/arama?query=${encodeURIComponent(q)}`);
+  /** Önce tam arama URL’si (choice/orderby/qt/query); kategori önerisi sonra yedek — öneri sayfası farklı yükleme/sıra yapabiliyor. */
+  urls.push(appendSort(`${SITE}/arama?qt=${encodeURIComponent(q)}&query=${encodeURIComponent(q)}`));
+  if (suggestPath) urls.push(appendSort(`${SITE}${suggestPath.startsWith("/") ? suggestPath : `/${suggestPath}`}`));
 
-  const curlOpts = {
-    referer: `${SITE}/`,
-    origin: SITE,
-    accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    useHttp11: true as const,
-    timeoutSec: 35,
-  };
+  if (!isFetchForcePlaywright()) {
+    const curlOpts = {
+      referer: `${SITE}/`,
+      origin: SITE,
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      useHttp11: true as const,
+      timeoutSec: 35,
+    };
 
-  for (const pageUrl of urls) {
-    let html: string;
-    try {
-      html = await fetchTextCurl(pageUrl, curlOpts);
-    } catch {
-      continue;
-    }
-    if (html.length < 800) continue;
-    const parsed = parseCiceksepetiListingHtml(html);
-    if (parsed.length > 0) {
-      return takeCheapestProducts(
-        parsed.map((r) => ({
-          store: "Çiçeksepeti",
-          title: r.title,
-          price: r.price,
-          currency: "TRY",
-          url: r.url,
-        })),
-        max
-      );
+    for (const pageUrl of urls) {
+      let html: string;
+      try {
+        html = await fetchTextCurl(pageUrl, curlOpts);
+      } catch {
+        continue;
+      }
+      if (html.length < 800) continue;
+      const parsed = parseCiceksepetiListingHtml(html);
+      if (parsed.length > 0) {
+        return takeCheapestProducts(
+          parsed.map((r) => ({
+            store: "Çiçeksepeti",
+            title: r.title,
+            price: r.price,
+            currency: "TRY",
+            url: r.url,
+          })),
+          max
+        );
+      }
     }
   }
 

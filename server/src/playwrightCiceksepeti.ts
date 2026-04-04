@@ -11,7 +11,19 @@ const UA =
 
 const HOME = "https://www.ciceksepeti.com/";
 
-/** Playwright string evaluate = tek ifade; IIFE. Liste kartı: data-cs-pb-name / fiyat span’ları. */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function budgetMs(): number {
+  const raw = process.env.STREAM_PER_STORE_TIMEOUT_MS?.trim();
+  if (raw && raw !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  }
+  return 90_000;
+}
+
 function buildCiceksepetiExtractScript(max: number): string {
   return `(function () {
   function parseTrAmount(chunk) {
@@ -27,6 +39,13 @@ function buildCiceksepetiExtractScript(max: number): string {
     while ((m = re1.exec(raw)) !== null) {
       var n1 = parseTrAmount(m[0]);
       if (n1 != null && n1 >= 0) amounts.push(n1);
+    }
+    if (!amounts.length) {
+      var re2 = /(\\d{1,3}(?:\\.\\d{3})+)(?:\\s*TL)?/g;
+      while ((m = re2.exec(raw)) !== null) {
+        var n2 = parseInt(m[1].replace(/\\./g, ""), 10);
+        if (isFinite(n2) && n2 >= 10) amounts.push(n2);
+      }
     }
     if (!amounts.length) return null;
     return Math.min.apply(null, amounts);
@@ -120,85 +139,106 @@ function buildCiceksepetiExtractScript(max: number): string {
 })()`;
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export type CiceksepetiScraped = { title: string; price: number; url: string };
 
-async function scrapeOnce(
-  browser: Browser,
-  listingUrls: string[],
-  scrollDelayMs: number,
-  maxProducts: number
+/**
+ * Tek Playwright oturumu: her URL'yi dene, kademeli scroll ile ürün topla.
+ * `max` ürün bulunursa hemen dön; bulunamazsa timeout'a kadar devam et.
+ */
+export async function scrapeCiceksepetiListingPages(
+  listingUrls: string[]
 ): Promise<CiceksepetiScraped[]> {
-  const context = await browser.newContext({
-    userAgent: UA,
-    locale: "tr-TR",
-    viewport: { width: 1366, height: 900 },
-    timezoneId: "Europe/Istanbul",
-  });
-
-  await context.addInitScript(
-    'Object.defineProperty(navigator, "webdriver", { get: function () { return undefined; } });'
-  );
-
-  const page = await context.newPage();
-
-  try {
-    await page.goto(HOME, { waitUntil: "domcontentloaded", timeout: 45000 });
-    await delay(800);
-
-    for (const pageUrl of listingUrls) {
-      await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
-      await page.waitForLoadState("load", { timeout: 20000 }).catch(() => {});
-
-      await page
-        .waitForFunction(
-          () => document.querySelectorAll('a[href*="kcm"], a[href*="kcs"]').length >= 1,
-          { timeout: 45000 }
-        )
-        .catch(() => {});
-
-      for (let i = 0; i < 18; i++) {
-        const n = await page.locator('a[href*="kcm"], a[href*="kcs"]').count();
-        if (n > 0) break;
-        await delay(1000);
-      }
-
-      await page.evaluate(() => window.scrollTo(0, 4000));
-      await delay(scrollDelayMs);
-
-      const batch = (await page.evaluate(buildCiceksepetiExtractScript(maxProducts))) as
-        | CiceksepetiScraped[]
-        | undefined;
-      if (Array.isArray(batch) && batch.length > 0) return batch;
-    }
-
-    return [];
-  } finally {
-    await context.close();
-  }
-}
-
-export async function scrapeCiceksepetiListingPages(listingUrls: string[]): Promise<CiceksepetiScraped[]> {
-  const maxProducts = getMaxProductsPerStore();
-  const rawScroll = Number(process.env.PLAYWRIGHT_CICEK_SCROLL_MS);
-  const scrollMs = Math.min(8000, Math.max(2000, Number.isFinite(rawScroll) && rawScroll > 0 ? rawScroll : 2800));
+  const max = Math.max(1, getMaxProductsPerStore());
+  const budget = budgetMs();
+  const t0 = Date.now();
+  const byUrl = new Map<string, CiceksepetiScraped>();
 
   const wantHeadless = playwrightHeadless();
-  const shouldRetryHeaded =
-    process.env.PLAYWRIGHT_CICEK_RETRY_HEADED !== "0" && wantHeadless;
-
   let browser = await launchChromiumPreferInstalled(wantHeadless);
+
+  const run = async (br: Browser): Promise<boolean> => {
+    const context = await br.newContext({
+      userAgent: UA,
+      locale: "tr-TR",
+      viewport: { width: 1366, height: 900 },
+      timezoneId: "Europe/Istanbul",
+    });
+    await context.addInitScript(
+      'Object.defineProperty(navigator, "webdriver", { get: function () { return undefined; } });'
+    );
+
+    const page = await context.newPage();
+
+    try {
+      await page.goto(HOME, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await delay(600);
+
+      for (const pageUrl of listingUrls) {
+        if (Date.now() - t0 >= budget) break;
+        if (byUrl.size >= max) break;
+
+        await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+        await page.waitForLoadState("load", { timeout: 20000 }).catch(() => {});
+
+        await page
+          .waitForSelector('[data-cs-product-box], a[href*="kcm"], a[href*="kcs"]', { timeout: 30000 })
+          .catch(() => {});
+
+        for (let wait = 0; wait < 15; wait++) {
+          const n = await page.locator('[data-cs-product-box], a[href*="kcm"], a[href*="kcs"]').count();
+          if (n > 0) break;
+          await delay(600);
+        }
+
+        await delay(1000);
+
+        let scrollRound = 0;
+        const maxScrollRounds = 12;
+
+        while (scrollRound < maxScrollRounds) {
+          if (Date.now() - t0 >= budget) break;
+
+          const batch = (await page.evaluate(buildCiceksepetiExtractScript(max * 3))) as
+            | CiceksepetiScraped[]
+            | undefined;
+
+          if (Array.isArray(batch)) {
+            for (const item of batch) {
+              if (!byUrl.has(item.url)) byUrl.set(item.url, item);
+            }
+          }
+
+          if (byUrl.size >= max) break;
+
+          await page.evaluate(() =>
+            window.scrollBy(0, Math.min(700, Math.floor(window.innerHeight * 0.8)))
+          );
+          await delay(500);
+          scrollRound++;
+        }
+
+        if (byUrl.size >= max) break;
+      }
+    } finally {
+      await context.close();
+    }
+
+    return byUrl.size > 0;
+  };
+
   try {
-    const rows = await scrapeOnce(browser, listingUrls, scrollMs, maxProducts);
-    if (rows.length > 0) return rows;
+    const ok = await run(browser);
+    if (ok && byUrl.size >= max) return [...byUrl.values()];
   } finally {
     await browser.close();
   }
 
-  if (shouldRetryHeaded) {
+  if (
+    byUrl.size < max &&
+    Date.now() - t0 < budget &&
+    process.env.PLAYWRIGHT_CICEK_RETRY_HEADED !== "0" &&
+    wantHeadless
+  ) {
     let headed: Browser | null =
       process.env.PLAYWRIGHT_USE_CHROME === "0"
         ? null
@@ -208,13 +248,12 @@ export async function scrapeCiceksepetiListingPages(listingUrls: string[]): Prom
     }
     if (headed) {
       try {
-        const rows = await scrapeOnce(headed, listingUrls, scrollMs, maxProducts);
-        if (rows.length > 0) return rows;
+        await run(headed);
       } finally {
         await headed.close();
       }
     }
   }
 
-  return [];
+  return [...byUrl.values()];
 }
