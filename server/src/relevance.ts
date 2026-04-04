@@ -42,13 +42,17 @@ function titleMatchesQueryTokens(foldedTitle: string, foldedTokens: string[]): b
     if (/\d/.test(tok)) {
       const esc = escapeRegExp(tok);
       const isAllDigits = /^\d+$/.test(tok);
-      // "16" gibi salt sayısal tokenlarda sonrası harf olabilir (16e, 16 Pro) ama başka rakam olmamalı (160).
-      // "s24" gibi karışıklarda hem öncesi hem sonrasında alfanümerik olmayan sınır istenir.
       const afterBound = isAllDigits ? `(?:$|[^\\d])` : `(?:$|[^\\p{L}\\p{N}])`;
       const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])${esc}${afterBound}`, "u");
       if (re.test(foldedTitle)) return true;
       const glued = new RegExp(`\\p{L}${esc}(?:$|[^\\d])`, "u");
       return glued.test(foldedTitle);
+    }
+    // "ti", "se" gibi kısa tokenlar "karti", "bit" içinde yanlış eşleşmesin → kelime sınırı iste
+    if (tok.length <= 2) {
+      const esc = escapeRegExp(tok);
+      const re = new RegExp(`(?:^|[^\\p{L}])${esc}(?:$|[^\\p{L}])`, "u");
+      return re.test(foldedTitle);
     }
     return foldedTitle.includes(tok);
   }).length;
@@ -60,15 +64,23 @@ function titleMatchesQueryTokens(foldedTitle: string, foldedTokens: string[]): b
 /**
  * Ürün başlığında arama terimleri yeterince geçmiyorsa ele (geniş mağaza araması gürültüsünü keser).
  */
-export function filterProductsByQuery(query: string, products: Product[]): Product[] {
+export function filterProductsByQuery(
+  query: string,
+  products: Product[],
+  pageMap?: Map<string, number>,
+): Product[] {
   const tokens = [...new Set(queryTokensForMatch(query))];
   if (tokens.length === 0) return products;
   const foldedTokens = tokens.map(foldForMatch);
   return products.filter((p) => {
     const t = foldForMatch(p.title);
     const ok = titleMatchesQueryTokens(t, foldedTokens);
-    if (!ok) {
-      console.info(`[relevance] elendi: [${p.store}] "${p.title.slice(0, 80)}" | tokens=${foldedTokens.join(",")}`);
+    const pg = pageMap?.get(p.url);
+    const pgTag = pg != null ? ` sayfa=${pg}` : "";
+    if (ok) {
+      console.info(`[relevance] ✓ alındı: [${p.store}]${pgTag} ${p.price} TL "${p.title.slice(0, 80)}" | tokens=${foldedTokens.join(",")}`);
+    } else {
+      console.info(`[relevance] ✗ elendi: [${p.store}]${pgTag} ${p.price} TL "${p.title.slice(0, 80)}" | tokens=${foldedTokens.join(",")}`);
     }
     return ok;
   });
