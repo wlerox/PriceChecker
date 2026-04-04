@@ -1,3 +1,4 @@
+import type { Page } from "playwright";
 import { fetchTextCurl, type FetchTextCurlOptions } from "./curlFetch.ts";
 import { isFetchCurlVerboseLog, isFetchForcePlaywright } from "./config/fetchConfig.ts";
 import { launchChromiumPreferInstalled, playwrightHeadless } from "./playwrightLaunch.ts";
@@ -21,6 +22,9 @@ export type FetchTextPlaywrightOptions = {
   lazyScrollRounds?: number;
   /** Log satırında görünür: `[fetch:Vatan]` */
   logLabel?: string;
+  /** Çerez-onay diyaloğunu kapatmak için CSS / Playwright selektörleri.
+   *  Sayfa yüklendikten sonra ilk görünür buton tıklanır. */
+  dismissCookieConsentSelectors?: string[];
 };
 
 function delay(ms: number): Promise<void> {
@@ -40,6 +44,28 @@ function curlVerbose(): boolean {
   return isFetchCurlVerboseLog();
 }
 
+async function tryDismissCookieConsent(
+  page: Page,
+  selectors: string[],
+  label?: string,
+): Promise<boolean> {
+  const found = await Promise.any(
+    selectors.map(async (sel) => {
+      const btn = page.locator(sel).first();
+      await btn.waitFor({ state: "visible", timeout: 3500 });
+      return { sel, btn };
+    }),
+  ).catch(() => null);
+  if (!found) return false;
+  // Register load listener BEFORE clicking; consent buttons may trigger a page reload.
+  const loadDone = page.waitForEvent("load", { timeout: 3000 }).catch(() => {});
+  await found.btn.click().catch(() => {});
+  console.info(`${tag(label)} cookie consent dismissed: ${found.sel}`);
+  await loadDone;
+  await delay(300);
+  return true;
+}
+
 export async function fetchTextPlaywright(url: string, options?: FetchTextPlaywrightOptions): Promise<string> {
   const timeoutMs = options?.timeoutMs ?? 45000;
   const waitUntil = options?.pageGotoWaitUntil ?? "domcontentloaded";
@@ -51,12 +77,22 @@ export async function fetchTextPlaywright(url: string, options?: FetchTextPlaywr
     await addPlaywrightFetchInitScripts(context);
     const page = await context.newPage();
 
+    let consentHandled = false;
+
     if (options?.referer) {
       await page.goto(options.referer, { waitUntil, timeout: timeoutMs }).catch(() => {});
       await delay(500);
+      if (options?.dismissCookieConsentSelectors?.length) {
+        consentHandled = await tryDismissCookieConsent(page, options.dismissCookieConsentSelectors, label);
+      }
     }
 
     await page.goto(url, { waitUntil, timeout: timeoutMs });
+
+    if (!consentHandled && options?.dismissCookieConsentSelectors?.length) {
+      await tryDismissCookieConsent(page, options.dismissCookieConsentSelectors, label);
+    }
+
     if (!options?.skipNetworkIdle) {
       await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
     }
