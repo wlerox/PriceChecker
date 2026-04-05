@@ -96,7 +96,7 @@ const CATEGORY_TREE: readonly CategoryBranch[] = [
   },
 ];
 
-type SortOption = "price-asc" | "price-desc" | "title-asc" | "store-asc";
+type SortOption = "price-asc" | "price-desc" | "default";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("#app yok");
@@ -108,27 +108,14 @@ app.innerHTML = `
       <p class="sub">Trendyol, Hepsiburada, Amazon TR, N11, Pazarama, İdefix, Vatan, PTT Avm, MediaMarkt, Çiçeksepeti, Teknosa, Koçtaş — yerelde çalışır, veri saklanmaz.</p>
     </header>
 
-    <form class="search-toolbar" id="form">
-      <label class="sr-only" for="q">Ürün ara</label>
-      <input
-        type="search"
-        id="q"
-        name="q"
-        placeholder="Ne arıyorsunuz? Örn: kulaklık, ekran kartı, mont…"
-        autocomplete="off"
-        required
-      />
-      <button type="submit" id="btn">Ara</button>
-    </form>
+    <aside class="filters filters--bar" id="filters" aria-label="Filtreler">
+      <div class="filters-head">
+        <h2 class="filters-title">Filtreler</h2>
+        <button type="button" class="btn-text" id="filter-reset">Sıfırla</button>
+      </div>
 
-    <div class="content-grid" id="content-grid">
-      <aside class="filters" id="filters" aria-label="Filtreler">
-        <div class="filters-head">
-          <h2 class="filters-title">Filtreler</h2>
-          <button type="button" class="btn-text" id="filter-reset">Sıfırla</button>
-        </div>
-
-        <details class="filter-section" open>
+      <div class="filters-columns">
+        <!--<details class="filter-section" open>
           <summary class="filter-summary">Kategori / ürün tipi</summary>
           <div class="filter-body category-stack">
             <div>
@@ -141,7 +128,7 @@ app.innerHTML = `
             </div>
             <p class="field-hint">Üst/alt kategori sunucuya gider: Vatan gibi sitelerde kategoriyle arar; diğerlerinde düz metin aranır. Dizüstü seçiliyken başlıkta net laptop olmayan aksesuar benzeri satırlar süzülür.</p>
           </div>
-        </details>
+        </details>-->
 
         <details class="filter-section" open>
           <summary class="filter-summary">Satıcı / mağaza</summary>
@@ -179,20 +166,7 @@ app.innerHTML = `
           </div>
         </details>
 
-        <details class="filter-section" open>
-          <summary class="filter-summary">Sıralama</summary>
-          <div class="filter-body">
-            <label class="field-label" for="sort-by">Sırala</label>
-            <select id="sort-by" class="select-input">
-              <option value="price-asc">Fiyat: düşükten yükseğe</option>
-              <option value="price-desc">Fiyat: yüksekten düşüğe</option>
-              <option value="title-asc">Ürün adı (A–Z)</option>
-              <option value="store-asc">Mağaza adı (A–Z)</option>
-            </select>
-          </div>
-        </details>
-
-        <details class="filter-section" open>
+        <!--<details class="filter-section" open>
           <summary class="filter-summary">Sonuç görünümü</summary>
           <div class="filter-body">
             <label class="check-row">
@@ -209,11 +183,31 @@ app.innerHTML = `
             <label class="field-label" for="title-filter">Listeyi daralt</label>
             <input type="search" id="title-filter" placeholder="Kelime (örn. bluetooth, ASUS)…" autocomplete="off" />
           </div>
-        </details>
-      </aside>
+        </details> -->
+      </div>
+    </aside>
 
+    <form class="search-toolbar" id="form">
+      <label class="sr-only" for="q">Ürün ara</label>
+      <input
+        type="search"
+        id="q"
+        name="q"
+        placeholder="Ne arıyorsunuz? Örn: kulaklık, ekran kartı, mont…"
+        autocomplete="off"
+        required
+      />
+      <select id="sort-by" aria-label="Sonuç sıralaması">
+        <option value="price-asc" selected>Fiyat: Düşükten yükseğe</option>
+        <option value="price-desc">Fiyat: Büyükten düşüğe</option>
+        <option value="default">Fiyat: Varsayılan</option>
+      </select>
+      <button type="submit" id="btn">Ara</button>
+    </form>
+
+    <div class="results-area" id="content-grid">
       <div class="results-column">
-        <p class="hint" id="hint">Arama kutusuna yazıp <strong>Ara</strong>’ya basın; sol panelden mağaza ve fiyat filtreleyebilirsiniz.</p>
+        <p class="hint" id="hint">Arama kutusuna yazıp <strong>Ara</strong>’ya basın; üstteki filtrelerle mağaza ve fiyat daraltabilirsiniz.</p>
         <p class="filter-active-note hidden" id="filter-note" aria-live="polite"></p>
         <div class="loading hidden" id="loading" aria-live="polite">Aranıyor…</div>
         <section class="errors hidden" id="errors"></section>
@@ -238,8 +232,8 @@ app.innerHTML = `
 
 const form = document.getElementById("form") as HTMLFormElement;
 const qInput = document.getElementById("q") as HTMLInputElement;
-const categoryParent = document.getElementById("category-parent") as HTMLSelectElement;
-const categorySub = document.getElementById("category-sub") as HTMLSelectElement;
+const categoryParent = document.getElementById("category-parent") as HTMLSelectElement | null;
+const categorySub = document.getElementById("category-sub") as HTMLSelectElement | null;
 const btn = document.getElementById("btn") as HTMLButtonElement;
 const loading = document.getElementById("loading") as HTMLDivElement;
 const errorsEl = document.getElementById("errors") as HTMLDivElement;
@@ -251,14 +245,15 @@ const filterNote = document.getElementById("filter-note") as HTMLParagraphElemen
 const priceMinEl = document.getElementById("price-min") as HTMLInputElement;
 const priceMaxEl = document.getElementById("price-max") as HTMLInputElement;
 const sortByEl = document.getElementById("sort-by") as HTMLSelectElement;
-const titleFilterEl = document.getElementById("title-filter") as HTMLInputElement;
-const onlyCheapestEl = document.getElementById("only-cheapest") as HTMLInputElement;
+const titleFilterEl = document.getElementById("title-filter") as HTMLInputElement | null;
+const onlyCheapestEl = document.getElementById("only-cheapest") as HTMLInputElement | null;
 const filterResetBtn = document.getElementById("filter-reset") as HTMLButtonElement;
 const storeSelectAllBtn = document.getElementById("store-select-all") as HTMLButtonElement;
 const storeClearAllBtn = document.getElementById("store-clear-all") as HTMLButtonElement;
 const filtersEl = document.getElementById("filters") as HTMLElement;
 
 function populateCategorySub(): void {
+  if (!categoryParent || !categorySub) return;
   const branch = CATEGORY_TREE.find((b) => b.id === categoryParent.value);
   if (!branch) return;
   categorySub.replaceChildren();
@@ -284,6 +279,7 @@ function populateCategorySub(): void {
 }
 
 function getSearchTypeForApi(): string | undefined {
+  if (!categoryParent || !categorySub) return undefined;
   const branch = CATEGORY_TREE.find((b) => b.id === categoryParent.value);
   if (!branch || branch.id === "_none") return undefined;
   const sub = categorySub.value.trim();
@@ -292,6 +288,7 @@ function getSearchTypeForApi(): string | undefined {
 }
 
 function getCategoryDisplayLabel(): string | undefined {
+  if (!categoryParent || !categorySub) return undefined;
   const branch = CATEGORY_TREE.find((b) => b.id === categoryParent.value);
   if (!branch || branch.id === "_none") return undefined;
   const sub = categorySub.value.trim();
@@ -301,6 +298,7 @@ function getCategoryDisplayLabel(): string | undefined {
 }
 
 function initCategorySelects(): void {
+  if (!categoryParent || !categorySub) return;
   categoryParent.replaceChildren();
   for (const b of CATEGORY_TREE) {
     const o = document.createElement("option");
@@ -333,6 +331,7 @@ function setLoading(on: boolean): void {
   loading.classList.toggle("hidden", !on);
   btn.disabled = on;
   qInput.disabled = on;
+  sortByEl.disabled = on;
   setFiltersDisabled(on);
 }
 
@@ -346,7 +345,7 @@ function getSelectedStores(): Set<string> {
 
 function getSort(): SortOption {
   const v = sortByEl.value;
-  if (v === "price-desc" || v === "title-asc" || v === "store-asc") return v;
+  if (v === "price-desc" || v === "default") return v;
   return "price-asc";
 }
 
@@ -354,7 +353,7 @@ function applyFilters(products: Product[]): Product[] {
   const stores = new Set([...getSelectedStores()].map((s) => s.trim()));
   const pmin = priceMinEl.value.trim() === "" ? null : Number(priceMinEl.value);
   const pmax = priceMaxEl.value.trim() === "" ? null : Number(priceMaxEl.value);
-  const titleNeedle = titleFilterEl.value.trim().toLocaleLowerCase("tr");
+  const titleNeedle = (titleFilterEl?.value ?? "").trim().toLocaleLowerCase("tr");
 
   let out = products.filter((p) => stores.has(p.store.trim()));
 
@@ -379,8 +378,6 @@ function applyFilters(products: Product[]): Product[] {
   out = [...out];
   if (sort === "price-asc") out.sort(compareProductPriceAsc);
   else if (sort === "price-desc") out.sort(compareProductPriceDesc);
-  else if (sort === "title-asc") out.sort((a, b) => a.title.localeCompare(b.title, "tr"));
-  else out.sort((a, b) => a.store.localeCompare(b.store, "tr"));
 
   return out;
 }
@@ -471,7 +468,7 @@ function renderTable(): void {
     return;
   }
 
-  const onlyCheapest = onlyCheapestEl.checked;
+  const onlyCheapest = onlyCheapestEl?.checked ?? false;
   const filtered = onlyCheapest ? [pickCheapest(pool)] : pool;
 
   wrap.classList.remove("hidden");
@@ -509,13 +506,13 @@ function resetFilters(): void {
   document.querySelectorAll<HTMLInputElement>('input[name="filter-store"]').forEach((el) => {
     el.checked = true;
   });
-  categoryParent.selectedIndex = 0;
+  if (categoryParent) categoryParent.selectedIndex = 0;
   populateCategorySub();
   priceMinEl.value = "";
   priceMaxEl.value = "";
   sortByEl.value = "price-asc";
-  titleFilterEl.value = "";
-  onlyCheapestEl.checked = false;
+  if (titleFilterEl) titleFilterEl.value = "";
+  if (onlyCheapestEl) onlyCheapestEl.checked = false;
   if (rawResults.length) renderTable();
 }
 
@@ -543,8 +540,8 @@ function wireFilterListeners(): void {
   priceMinEl.addEventListener("input", rerender);
   priceMaxEl.addEventListener("input", rerender);
   sortByEl.addEventListener("change", rerender);
-  onlyCheapestEl.addEventListener("change", rerender);
-  titleFilterEl.addEventListener("input", rerender);
+  onlyCheapestEl?.addEventListener("change", rerender);
+  titleFilterEl?.addEventListener("input", rerender);
 
   document.querySelectorAll(".chip").forEach((chip) => {
     chip.addEventListener("click", () => {
@@ -568,7 +565,7 @@ form.addEventListener("submit", async (e) => {
   if (!q) return;
   const selectedStores = [...getSelectedStores()];
   if (selectedStores.length === 0) {
-    hint.textContent = "En az bir satıcı seçin (sol panel).";
+    hint.textContent = "En az bir satıcı seçin (üstteki Satıcı / mağaza filtresi).";
     return;
   }
   const typeRaw = getSearchTypeForApi();
