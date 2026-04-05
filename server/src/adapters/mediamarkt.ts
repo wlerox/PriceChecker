@@ -111,6 +111,15 @@ function parseMediaMarktHtml(html: string): Product[] {
   return out;
 }
 
+function mmMaxSearchPages(): number {
+  const raw = process.env.MEDIAMARKT_MAX_PAGES?.trim();
+  if (raw) {
+    const n = parseInt(raw, 10);
+    if (Number.isFinite(n) && n >= 1 && n <= 50) return n;
+  }
+  return 10;
+}
+
 /**
  * Playwright ile arama sayfası yüklenir (sonuçlar istemci tarafında).
  * `MEDIAMARKT_NO_PLAYWRIGHT=1` ile devre dışı (boş dizi).
@@ -119,16 +128,41 @@ export async function searchMediaMarkt(query: string): Promise<Product[]> {
   if (process.env.MEDIAMARKT_NO_PLAYWRIGHT === "1") return [];
 
   const max = getMaxProductsPerStore();
-  const parseLimit = max * 5;
+  const minCardsOnPage = Math.max(20, max * 5);
   const q = encodeURIComponent(query.trim());
-  const searchUrl = `${BASE}/tr/search.html?query=${q}&sort=currentprice+asc`;
+  const maxPages = mmMaxSearchPages();
+  const merged: Product[] = [];
+  const seen = new Set<string>();
 
   try {
-    const html = await fetchMediaMarktSearchHtmlWithPlaywright(searchUrl, parseLimit);
-    const all = parseMediaMarktHtml(html);
-    const relevant = filterProductsByQuery(query, all);
+    for (let page = 1; page <= maxPages; page++) {
+      const searchUrl =
+        page <= 1
+          ? `${BASE}/tr/search.html?query=${q}&sort=currentprice+asc`
+          : `${BASE}/tr/search.html?query=${q}&sort=currentprice+asc&page=${page}`;
+
+      const html = await fetchMediaMarktSearchHtmlWithPlaywright(searchUrl, minCardsOnPage);
+      const batch = parseMediaMarktHtml(html);
+
+      let newUrls = 0;
+      for (const p of batch) {
+        if (seen.has(p.url)) continue;
+        seen.add(p.url);
+        merged.push(p);
+        newUrls++;
+      }
+
+      const relevant = filterProductsByQuery(query, merged);
+      if (relevant.length >= max) break;
+
+      if (page > 1 && newUrls === 0) break;
+      if (batch.length === 0) break;
+    }
+
+    const relevant = filterProductsByQuery(query, merged);
     return takeCheapestProducts(relevant, max);
-  } catch {
+  } catch (e) {
+    console.warn("[MediaMarkt]", e instanceof Error ? e.message : String(e));
     return [];
   }
 }

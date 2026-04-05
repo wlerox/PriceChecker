@@ -4,6 +4,7 @@ import rateLimit from "express-rate-limit";
 import type { Product, SearchResponse } from "../../shared/types.ts";
 import { sortProductsByPriceAsc } from "./sortProducts.ts";
 import { applyRelevanceFilters } from "./relevance.ts";
+import { runWithRelevanceLoggingAsync } from "./relevanceLoggingContext.ts";
 import { createStoreJobs } from "./storeJobs.ts";
 import { writeSearchNdjsonStream } from "./streamSearch.ts";
 
@@ -88,32 +89,34 @@ app.get("/api/search", async (req, res) => {
     return;
   }
 
-  const settled = await Promise.allSettled(jobs.map((j) => j.fn()));
-  const results: Product[] = [];
-  const errors: { store: string; message: string }[] = [];
+  await runWithRelevanceLoggingAsync(jobs.length === 1, async () => {
+    const settled = await Promise.allSettled(jobs.map((j) => j.fn()));
+    const results: Product[] = [];
+    const errors: { store: string; message: string }[] = [];
 
-  settled.forEach((r, i) => {
-    const name = jobs[i].name;
-    if (r.status === "fulfilled") {
-      for (const p of r.value) {
-        results.push(p);
+    settled.forEach((r, i) => {
+      const name = jobs[i].name;
+      if (r.status === "fulfilled") {
+        for (const p of r.value) {
+          results.push(p);
+        }
+      } else {
+        const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+        errors.push({ store: name, message: msg });
       }
-    } else {
-      const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
-      errors.push({ store: name, message: msg });
-    }
+    });
+
+    let relevant = applyRelevanceFilters(q, searchType, results);
+    relevant = sortProductsByPriceAsc(relevant);
+
+    const body: SearchResponse = {
+      query: q,
+      ...(searchType !== undefined ? { searchType } : {}),
+      results: relevant,
+      errors: errors.length ? errors : undefined,
+    };
+    res.json(body);
   });
-
-  let relevant = applyRelevanceFilters(q, searchType, results);
-  relevant = sortProductsByPriceAsc(relevant);
-
-  const body: SearchResponse = {
-    query: q,
-    ...(searchType !== undefined ? { searchType } : {}),
-    results: relevant,
-    errors: errors.length ? errors : undefined,
-  };
-  res.json(body);
 });
 
 /**
@@ -135,7 +138,9 @@ app.get("/api/search/stream", async (req, res) => {
       res.status(400).json({ error: "En az bir geçerli mağaza seçin (stores parametresi)." });
       return;
     }
-    await writeSearchNdjsonStream(res, q, searchType, jobs);
+    await runWithRelevanceLoggingAsync(jobs.length === 1, () =>
+      writeSearchNdjsonStream(res, q, searchType, jobs),
+    );
   } catch (e) {
     if (!res.headersSent) {
       const msg = e instanceof Error ? e.message : String(e);

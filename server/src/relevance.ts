@@ -1,15 +1,27 @@
 import type { Product } from "../../shared/types.ts";
+import { isRelevanceLoggingEnabled } from "./relevanceLoggingContext.ts";
 
 /**
  * Arama sorgusundan anlamlı parçalar (2+ karakter; harf/rakam).
  * Örn. "rtx 5080" → ["rtx","5080"] — başlıkta hepsi geçmeli.
+ * Tam sayı tokenlarında: "50" hem "5080" hem "5060" ön eki olarak geçmesin diye,
+ * sorguda daha uzun bir rakam tokenı varsa kısa önek atılır.
  */
 export function queryTokensForMatch(query: string): string[] {
-  return query
+  const raw = query
     .toLocaleLowerCase("tr")
     .split(/[^\p{L}\p{N}]+/u)
     .map((w) => w.trim())
     .filter((w) => w.length >= 2);
+  const uniq = [...new Set(raw)];
+  return uniq.filter((t) => {
+    if (!/^\d+$/.test(t)) return true;
+    for (const o of uniq) {
+      if (o === t || !/^\d+$/.test(o)) continue;
+      if (o.length > t.length && o.startsWith(t)) return false;
+    }
+    return true;
+  });
 }
 
 /** i/ı, ğ/g vb. farklarında eşleşmeyi gevşetir (ASCII klavye ile yazılan sorgu için). */
@@ -75,12 +87,18 @@ export function filterProductsByQuery(
   return products.filter((p) => {
     const t = foldForMatch(p.title);
     const ok = titleMatchesQueryTokens(t, foldedTokens);
-    const pg = pageMap?.get(p.url);
-    const pgTag = pg != null ? ` sayfa=${pg}` : "";
-    if (ok) {
-      console.info(`[relevance] ✓ alındı: [${p.store}]${pgTag} ${p.price} TL "${p.title.slice(0, 80)}" | tokens=${foldedTokens.join(",")}`);
-    } else {
-      console.info(`[relevance] ✗ elendi: [${p.store}]${pgTag} ${p.price} TL "${p.title.slice(0, 80)}" | tokens=${foldedTokens.join(",")}`);
+    if (isRelevanceLoggingEnabled()) {
+      const pg = pageMap?.get(p.url);
+      const pgTag = pg != null ? ` sayfa=${pg}` : "";
+      if (ok) {
+        console.info(
+          `[relevance] ✓ alındı: [${p.store}]${pgTag} ${p.price} TL "${p.title.slice(0, 80)}" | tokens=${foldedTokens.join(",")}`,
+        );
+      } else {
+        console.info(
+          `[relevance] ✗ elendi: [${p.store}]${pgTag} ${p.price} TL "${p.title.slice(0, 80)}" | tokens=${foldedTokens.join(",")}`,
+        );
+      }
     }
     return ok;
   });
@@ -105,8 +123,9 @@ export function filterProductsBySearchType(searchType: string | undefined, produ
 }
 
 /**
- * API yanıtı için: başlık + kategori süzgeçleri birlikte tüm satırları silerse,
- * ham mağaza sonuçlarını döndür (ekranda hiç veri kalmamasın).
+ * Önce sorgu terimleri, sonra isteğe bağlı alt kategori süzgeci.
+ * Sorgu hiçbir satırla eşleşmezse boş döner (alakasız ürün göstermez).
+ * Kategori süzgeci tek başına her şeyi silerse yalnızca sorguyla eşleşenler kalır.
  */
 export function applyRelevanceFilters(
   query: string,

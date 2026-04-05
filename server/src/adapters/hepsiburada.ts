@@ -4,6 +4,7 @@ import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
 import { fetchHepsiburadaSearchHtmlWithPlaywright } from "../playwrightHb.ts";
 import { fetchTextCurl, fetchTextCurlWithSession } from "../curlFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
+import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
 
 const BASE = "https://www.hepsiburada.com";
@@ -17,9 +18,12 @@ function isHbCaptchaPage(html: string): boolean {
 }
 
 /** Sitedeki “artan fiyat” ile uyumlu liste; karşılaştırma için düşükten yükseğe. */
-async function fetchSearchHtml(query: string): Promise<string> {
+async function fetchSearchHtml(query: string, page = 1): Promise<string> {
   const q = encodeURIComponent(query.trim());
-  const searchUrl = `${BASE}/ara?q=${q}&siralama=artanfiyat`;
+  const searchUrl =
+    page <= 1
+      ? `${BASE}/ara?q=${q}&siralama=artanfiyat`
+      : `${BASE}/ara?q=${q}&siralama=artanfiyat&sayfa=${page}`;
   if (process.env.HEPSIBURADA_DEBUG_URL === "1") {
     console.log("[hepsiburada] searchUrl", searchUrl);
   }
@@ -118,27 +122,56 @@ function walkJsonForHbProducts(data: unknown, out: Product[], depth: number, max
   }
 }
 
+function hbMaxSearchPages(): number {
+  const raw = process.env.HEPSIBURADA_MAX_PAGES?.trim();
+  if (raw) {
+    const n = parseInt(raw, 10);
+    if (Number.isFinite(n) && n >= 1 && n <= 50) return n;
+  }
+  return 10;
+}
+
 export async function searchHepsiburada(query: string): Promise<Product[]> {
   const max = getMaxProductsPerStore();
-  const html = await fetchSearchHtml(query);
+  const parseLimit = 100;
+  const maxPages = hbMaxSearchPages();
+  const merged: Product[] = [];
+  const seen = new Set<string>();
 
-  let out = parseHbListHtml(html, max);
-  if (out.length === 0) {
-    out = tryProductsFromNextData(html, max);
-  }
-  if (out.length === 0) {
-    out = parseJsonLd(cheerio.load(html), max);
+  for (let page = 1; page <= maxPages; page++) {
+    const html = await fetchSearchHtml(query, page);
+
+    let batch = parseHbListHtml(html, parseLimit);
+    if (batch.length === 0) {
+      batch = tryProductsFromNextData(html, parseLimit);
+    }
+    if (batch.length === 0) {
+      batch = parseJsonLd(cheerio.load(html), parseLimit);
+    }
+
+    if (page === 1 && batch.length === 0 && isHbCaptchaPage(html)) {
+      throw new Error(
+        "Hepsiburada güvenlik doğrulaması istiyor; otomatik arama bu ağdan engellenmiş olabilir. Tarayıcıda hepsiburada.com açıp doğrulama yapın veya farklı internet bağlantısı deneyin."
+      );
+    }
+
+    let newUrls = 0;
+    for (const p of batch) {
+      if (seen.has(p.url)) continue;
+      seen.add(p.url);
+      merged.push(p);
+      newUrls++;
+    }
+
+    const relevant = filterProductsByQuery(query, merged);
+    if (relevant.length >= max) break;
+
+    if (page > 1 && newUrls === 0) break;
+    if (batch.length === 0) break;
   }
 
-  // Captcha/ güvenlik sayfası olsa bile bazı isteklerde ürün kartları kısmen görünebiliyor.
-  // Bu yüzden önce parse deniyoruz; parse boş kalırsa ancak o zaman hataya düşüyoruz.
-  if (out.length === 0 && isHbCaptchaPage(html)) {
-    throw new Error(
-      "Hepsiburada güvenlik doğrulaması istiyor; otomatik arama bu ağdan engellenmiş olabilir. Tarayıcıda hepsiburada.com açıp doğrulama yapın veya farklı internet bağlantısı deneyin."
-    );
-  }
-
-  return takeCheapestProducts(dedupeByUrl(out), max);
+  const relevant = filterProductsByQuery(query, merged);
+  return takeCheapestProducts(relevant, max);
 }
 
 function parseHbListHtml(html: string, max: number): Product[] {

@@ -4,6 +4,7 @@ import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
 import { fetchTextCurl, fetchTextCurlWithSession } from "../curlFetch.ts";
 import { fetchTextPlaywright, isFetchForcePlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
+import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
 
 const BASE = "https://www.vatanbilgisayar.com";
@@ -26,6 +27,7 @@ function vatanCategorySegment(typeHint: string | undefined): string | undefined 
   return undefined;
 }
 
+/** Vatan arama yolu: boşluklar encodeURIComponent ile %20 kalır (tireye çevrilmez). */
 function slugCandidates(query: string): string[] {
   const words = query.trim().split(/\s+/).filter(Boolean);
   if (!words.length) return [];
@@ -33,10 +35,11 @@ function slugCandidates(query: string): string[] {
   const out: string[] = [];
   const add = (s: string) => {
     if (!s) return;
-    const enc = encodeURIComponent(s).replace(/%20/g, "-");
+    const enc = encodeURIComponent(s);
     if (!out.includes(enc)) out.push(enc);
   };
 
+  add(words.join(" "));
   add(words.join("-"));
   add(words.join("").replace(/-+/g, ""));
   const joined = words.join("").replace(/-+/g, "");
@@ -46,7 +49,9 @@ function slugCandidates(query: string): string[] {
   return out;
 }
 
-function parseVatanHtml(html: string, max: number): Product[] {
+const PARSE_LIST_LIMIT = 100;
+
+function parseVatanHtml(html: string, maxRows: number): Product[] {
   const $ = cheerio.load(html);
   const out: Product[] = [];
   const seen = new Set<string>();
@@ -58,7 +63,7 @@ function parseVatanHtml(html: string, max: number): Product[] {
     : $("#product-list-container").find(".product-list.product-list--list-page");
 
   $rows.each((_, el) => {
-    if (out.length >= max) return false;
+    if (out.length >= maxRows) return false;
     const row = $(el);
     const link = row.find("a.product-list-link").first();
     let href = link.attr("href") ?? "";
@@ -147,8 +152,9 @@ export async function searchVatan(query: string, typeHint?: string): Promise<Pro
           }
         }
       }
-      const parsed = parseVatanHtml(html, max);
-      if (parsed.length > 0) return takeCheapestProducts(parsed, max);
+      const parsed = parseVatanHtml(html, PARSE_LIST_LIMIT);
+      const relevant = filterProductsByQuery(query, parsed);
+      if (relevant.length > 0) return takeCheapestProducts(relevant, max);
     }
   }
 

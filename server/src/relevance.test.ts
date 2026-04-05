@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { filterProductsByQuery, filterProductsBySearchType, queryTokensForMatch } from "./relevance.ts";
+import {
+  applyRelevanceFilters,
+  filterProductsByQuery,
+  filterProductsBySearchType,
+  queryTokensForMatch,
+} from "./relevance.ts";
 import type { Product } from "../../shared/types.ts";
 
 const p = (title: string): Product => ({
@@ -98,6 +103,18 @@ test("dizüstü: Laptop Adaptörü başlığı laptop kelimesi yüzünden tutulm
   ]);
   assert.equal(out.length, 1);
   assert.ok(out[0].title.includes("MSI"));
+});
+
+test("applyRelevanceFilters: kategori tek başına her şeyi silerse sorgu eşleşenleri döner", () => {
+  const rows = [p("HAMA Laptop Adaptörü Güç Kablosu")];
+  const out = applyRelevanceFilters("laptop", "dizüstü bilgisayar", rows);
+  assert.equal(out.length, 1);
+  assert.ok(out[0].title.includes("Laptop"));
+});
+
+test("applyRelevanceFilters: sorgu hiçbir satırla eşleşmezse boş (alakasız fallback yok)", () => {
+  const rows = [p("MSI RTX 5060 Ventus Laptop"), p("Kablosuz Mouse")];
+  assert.equal(applyRelevanceFilters("rtx 5080", undefined, rows).length, 0);
 });
 
 test("dizüstü: kablosuz laptop elenmez", () => {
