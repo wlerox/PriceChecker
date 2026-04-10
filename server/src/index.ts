@@ -1,12 +1,14 @@
 import cors from "cors";
 import express from "express";
 import rateLimit from "express-rate-limit";
+import { pathToFileURL } from "node:url";
 import type { Product, SearchResponse } from "../../shared/types.ts";
 import { sortProductsByPriceAsc } from "./sortProducts.ts";
 import { applyRelevanceFilters } from "./relevance.ts";
 import { runWithRelevanceLoggingAsync } from "./relevanceLoggingContext.ts";
-import { createStoreJobs } from "./storeJobs.ts";
+import { createStoreJobs, type StoreJob } from "./storeJobs.ts";
 import { writeSearchNdjsonStream } from "./streamSearch.ts";
+import { sendBestPriceTelegramMessage } from "./services/telegramNotifier.ts";
 
 function parseStoresQuery(raw: string | string[] | undefined): string[] | undefined {
   if (raw == null) return undefined;
@@ -42,113 +44,164 @@ function isAllowedCorsOrigin(origin: string | undefined): boolean {
   return allowedOriginPatterns.some((re) => re.test(origin));
 }
 
-const app = express();
-app.set("trust proxy", 1);
+type SearchDeps = {
+  createStoreJobsFn?: (q: string, searchType?: string, onlyStores?: string[]) => StoreJob[];
+  notifyBestPriceFn?: typeof sendBestPriceTelegramMessage;
+};
 
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (isAllowedCorsOrigin(origin)) {
-        cb(null, origin ?? true);
-      } else {
-        cb(null, false);
-      }
-    },
-  }),
-);
+export function createApp(deps: SearchDeps = {}) {
+  const createStoreJobsFn = deps.createStoreJobsFn ?? createStoreJobs;
+  const notifyBestPriceFn = deps.notifyBestPriceFn ?? sendBestPriceTelegramMessage;
 
-const limiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 40,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Çok fazla istek. Bir dakika sonra tekrar deneyin." },
-});
+  const app = express();
+  app.set("trust proxy", 1);
 
-app.use("/api/", limiter);
-app.use(express.json());
-
-app.get("/api/health", (_req, res) => {
-  res.json({ ok: true });
-});
-
-/** Tüm mağazalar aynı anda sorgulanır; yanıt tüm sonuçlar hazır olunca döner. */
-app.get("/api/search", async (req, res) => {
-  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
-  if (!q) {
-    res.status(400).json({ error: "q parametresi gerekli" });
-    return;
-  }
-  const searchTypeRaw = typeof req.query.type === "string" ? req.query.type.trim() : "";
-  const searchType = searchTypeRaw.length > 0 ? searchTypeRaw : undefined;
-  const onlyStores = parseStoresQuery(req.query.stores as string | string[] | undefined);
-
-  const jobs = createStoreJobs(q, searchType, onlyStores);
-  if (jobs.length === 0) {
-    res.status(400).json({ error: "En az bir geçerli mağaza seçin (stores parametresi)." });
-    return;
-  }
-
-  await runWithRelevanceLoggingAsync(jobs.length === 1, async () => {
-    const settled = await Promise.allSettled(jobs.map((j) => j.fn()));
-    const results: Product[] = [];
-    const errors: { store: string; message: string }[] = [];
-
-    settled.forEach((r, i) => {
-      const name = jobs[i].name;
-      if (r.status === "fulfilled") {
-        for (const p of r.value) {
-          results.push(p);
+  app.use(
+    cors({
+      origin: (origin, cb) => {
+        if (isAllowedCorsOrigin(origin)) {
+          cb(null, origin ?? true);
+        } else {
+          cb(null, false);
         }
-      } else {
-        const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
-        errors.push({ store: name, message: msg });
-      }
-    });
+      },
+    }),
+  );
 
-    let relevant = applyRelevanceFilters(q, searchType, results);
-    relevant = sortProductsByPriceAsc(relevant);
-
-    const body: SearchResponse = {
-      query: q,
-      ...(searchType !== undefined ? { searchType } : {}),
-      results: relevant,
-      errors: errors.length ? errors : undefined,
-    };
-    res.json(body);
+  const limiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 40,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Çok fazla istek. Bir dakika sonra tekrar deneyin." },
   });
-});
 
-/**
- * Mağazalar yine paralel; her mağaza bitince bir NDJSON satırı gelir (ilk sonuçlar beklemeden işlenir).
- */
-app.get("/api/search/stream", async (req, res) => {
-  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
-  if (!q) {
-    res.status(400).json({ error: "q parametresi gerekli" });
-    return;
-  }
-  const searchTypeRaw = typeof req.query.type === "string" ? req.query.type.trim() : "";
-  const searchType = searchTypeRaw.length > 0 ? searchTypeRaw : undefined;
-  const onlyStores = parseStoresQuery(req.query.stores as string | string[] | undefined);
+  app.use("/api/", limiter);
+  app.use(express.json());
 
-  try {
-    const jobs = createStoreJobs(q, searchType, onlyStores);
+  app.get("/api/health", (_req, res) => {
+    res.json({ ok: true });
+  });
+
+  /** Tüm mağazalar aynı anda sorgulanır; yanıt tüm sonuçlar hazır olunca döner. */
+  app.get("/api/search", async (req, res) => {
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    if (!q) {
+      res.status(400).json({ error: "q parametresi gerekli" });
+      return;
+    }
+    const searchTypeRaw = typeof req.query.type === "string" ? req.query.type.trim() : "";
+    const searchType = searchTypeRaw.length > 0 ? searchTypeRaw : undefined;
+    const onlyStores = parseStoresQuery(req.query.stores as string | string[] | undefined);
+
+    const jobs = createStoreJobsFn(q, searchType, onlyStores);
     if (jobs.length === 0) {
       res.status(400).json({ error: "En az bir geçerli mağaza seçin (stores parametresi)." });
       return;
     }
-    await runWithRelevanceLoggingAsync(jobs.length === 1, () =>
-      writeSearchNdjsonStream(res, q, searchType, jobs),
-    );
-  } catch (e) {
-    if (!res.headersSent) {
-      const msg = e instanceof Error ? e.message : String(e);
-      res.status(500).json({ error: msg });
-    }
-  }
-});
 
-app.listen(PORT, () => {
-  console.log(`API http://localhost:${PORT}`);
-});
+    await runWithRelevanceLoggingAsync(jobs.length === 1, async () => {
+      const settled = await Promise.allSettled(jobs.map((j) => j.fn()));
+      const results: Product[] = [];
+      const errors: { store: string; message: string }[] = [];
+
+      settled.forEach((r, i) => {
+        const name = jobs[i].name;
+        if (r.status === "fulfilled") {
+          for (const p of r.value) {
+            results.push(p);
+          }
+        } else {
+          const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+          errors.push({ store: name, message: msg });
+        }
+      });
+
+      let relevant = applyRelevanceFilters(q, searchType, results);
+      relevant = sortProductsByPriceAsc(relevant);
+
+      if (relevant.length > 0) {
+        const best = relevant[0];
+        try {
+          await notifyBestPriceFn({
+            query: q,
+            searchType,
+            bestProduct: best,
+            totalResults: relevant.length,
+          });
+        } catch (notifyErr) {
+          const msg = notifyErr instanceof Error ? notifyErr.message : String(notifyErr);
+          console.warn(`[telegram-notify] ${msg}`);
+        }
+      }
+
+      const body: SearchResponse = {
+        query: q,
+        ...(searchType !== undefined ? { searchType } : {}),
+        results: relevant,
+        errors: errors.length ? errors : undefined,
+      };
+      res.json(body);
+    });
+  });
+
+  /**
+   * Mağazalar yine paralel; her mağaza bitince bir NDJSON satırı gelir (ilk sonuçlar beklemeden işlenir).
+   */
+  app.get("/api/search/stream", async (req, res) => {
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    if (!q) {
+      res.status(400).json({ error: "q parametresi gerekli" });
+      return;
+    }
+    const searchTypeRaw = typeof req.query.type === "string" ? req.query.type.trim() : "";
+    const searchType = searchTypeRaw.length > 0 ? searchTypeRaw : undefined;
+    const onlyStores = parseStoresQuery(req.query.stores as string | string[] | undefined);
+
+    try {
+      const jobs = createStoreJobsFn(q, searchType, onlyStores);
+      if (jobs.length === 0) {
+        res.status(400).json({ error: "En az bir geçerli mağaza seçin (stores parametresi)." });
+        return;
+      }
+      const summary = await runWithRelevanceLoggingAsync(jobs.length === 1, () =>
+        writeSearchNdjsonStream(res, q, searchType, jobs),
+      );
+      if (summary.relevantProducts.length > 0) {
+        const allSorted = sortProductsByPriceAsc(summary.relevantProducts);
+        const best = allSorted[0];
+        try {
+          await notifyBestPriceFn({
+            query: q,
+            searchType,
+            bestProduct: best,
+            totalResults: allSorted.length,
+          });
+        } catch (notifyErr) {
+          const msg = notifyErr instanceof Error ? notifyErr.message : String(notifyErr);
+          console.warn(`[telegram-notify] ${msg}`);
+        }
+      }
+    } catch (e) {
+      if (!res.headersSent) {
+        const msg = e instanceof Error ? e.message : String(e);
+        res.status(500).json({ error: msg });
+      }
+    }
+  });
+
+  return app;
+}
+
+function isMainModule(): boolean {
+  const argv1 = process.argv[1];
+  if (!argv1) return false;
+  return pathToFileURL(argv1).href === import.meta.url;
+}
+
+if (isMainModule()) {
+  const app = createApp();
+  app.listen(PORT, () => {
+    console.log(`API http://localhost:${PORT}`);
+  });
+}

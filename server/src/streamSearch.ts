@@ -7,14 +7,16 @@ import type { StoreJob } from "./storeJobs.ts";
 type StreamLineStore = { type: "store"; store: string; products: Product[] };
 type StreamLineError = { type: "error"; store: string; message: string };
 type StreamLineDone = { type: "done"; query: string; searchType?: string };
+export type StreamSearchSummary = { relevantProducts: Product[] };
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_resolve, reject) => {
-      setTimeout(() => reject(new Error(`${label} timeout after ${ms}ms`)), ms);
-    }),
-  ]);
+  let timer: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<T>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timeout after ${ms}ms`)), ms);
+  });
+  return Promise.race([p, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 /**
@@ -26,7 +28,7 @@ export async function writeSearchNdjsonStream(
   query: string,
   searchType: string | undefined,
   jobs: StoreJob[]
-): Promise<void> {
+): Promise<StreamSearchSummary> {
   res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("X-Accel-Buffering", "no");
@@ -37,6 +39,7 @@ export async function writeSearchNdjsonStream(
     perStoreTimeoutMsRaw && perStoreTimeoutMsRaw !== "" ? Number(perStoreTimeoutMsRaw) : 90000;
 
   const pending = new Map<string, Promise<Pending>>();
+  const relevantProducts: Product[] = [];
   for (const job of jobs) {
     pending.set(
       job.name,
@@ -59,6 +62,7 @@ export async function writeSearchNdjsonStream(
     if (winner.v.ok) {
       let relevant = applyRelevanceFilters(query, searchType, winner.v.products);
       relevant = sortProductsByPriceAsc(relevant);
+      relevantProducts.push(...relevant);
       const line: StreamLineStore = { type: "store", store: winner.name, products: relevant };
       res.write(JSON.stringify(line) + "\n");
     } else {
@@ -74,4 +78,5 @@ export async function writeSearchNdjsonStream(
   const done: StreamLineDone = { type: "done", query, searchType };
   res.write(JSON.stringify(done) + "\n");
   res.end();
+  return { relevantProducts };
 }

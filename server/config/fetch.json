@@ -8,14 +8,22 @@
     "playwrightChannel": "Boş değilse tek kanal zorunlu: chrome veya msedge. Ortam: PLAYWRIGHT_CHANNEL önceliklidir.",
     "playwrightUseChrome": "true: yalnızca Chrome dene; false: Chrome’u atlama listesine al; null: varsayılan sıra. Ortam: PLAYWRIGHT_USE_CHROME önceliklidir.",
     "playwrightUseEdge": "false: Edge’i atlama listesine al; null: varsayılan. Ortam: PLAYWRIGHT_USE_EDGE önceliklidir.",
-    "maxProductsPerStore": "Her mağaza için en fazla kaç ürün adayı (sorgu ile eşleşenler arasından fiyata göre en ucuz N). 1 yapınca ilgili mağaza araması yeterli aday bulunca mümkün olan yerlerde erken biter. Ortam: FETCH_MAX_PRODUCTS_PER_STORE (öncelikli)."
+    "maxProductsPerStore": "Her mağaza için en fazla kaç ürün adayı (sorgu ile eşleşenler arasından fiyata göre en ucuz N). 1 yapınca ilgili mağaza araması yeterli aday bulunca mümkün olan yerlerde erken biter. Ortam: FETCH_MAX_PRODUCTS_PER_STORE (öncelikli).",
+    "telegram": "Telegram bildirimleri için geçici konfig alanı. Not: mevcut kodda aktif kullanım env üzerinden (TELEGRAM_*)."
   },
-  "forcePlaywright": true,
+  "forcePlaywright": false,
   "curlVerboseLog": false,
-  "playwrightVisible": true,
+  "playwrightVisible": false,
   "playwrightBundledChromiumOnly": false,
   "playwrightChannel": "",
   "playwrightUseChrome": null,
   "playwrightUseEdge": null,
-  "maxProductsPerStore": 1
+  "maxProductsPerStore": 1,
+  "telegram": {
+    "enabled": true,
+    "botToken": "8101161426:AAG1gV3alT08TvLg1HKXW9Wn3w1TC-mmilI",
+    "chatId": "-5272619862",
+    "cooldownMin": 15,
+    "timeoutMs": 8000
+  }
 }

@@ -86,6 +86,31 @@ $env:VITE_API_BASE="https://SENIN-API-URL"; npm run build -w tr-price-compare-cl
 
 Sunucu `*.web.app` için **CORS** açık; özel domain için `CORS_ORIGINS`. Örnek: [client/.env.example](client/.env.example).
 
+## Telegram en uygun fiyat bildirimi (opsiyonel)
+
+`/api/search` tamamlandığında, sıralanmış sonuçların en düşük fiyatlı ürünü Telegram grubuna gönderilebilir.
+Temel ayarlar `server/config/fetch.json` içindeki `telegram` bloğundan okunur; `TELEGRAM_*` ortam değişkenleri verilirse bunlar config değerlerini geçersiz kılar.
+
+Sunucu ortam değişkenleri:
+
+- `TELEGRAM_NOTIFY_ENABLED=1` bildirim akışını açar (`0`/boş = kapalı).
+- `TELEGRAM_BOT_TOKEN=123456:ABC...` BotFather'dan aldığınız bot token.
+- `TELEGRAM_CHAT_ID=-100...` mesaj gönderilecek grup kimliği.
+- `TELEGRAM_NOTIFY_COOLDOWN_MIN=15` aynı ürün/sorgu mesajı için cooldown süresi (dakika).
+- `TELEGRAM_NOTIFY_TIMEOUT_MS=8000` Telegram API isteği zaman aşımı (ms).
+
+Kurulum notları:
+
+1. Telegram'da `@BotFather` ile bot oluşturup token alın.
+2. Botu hedef gruba ekleyin ve mesaj gönderme izni verin.
+3. Grup `chat_id` değerini alın (`-100` ile başlar).
+4. Env değişkenlerini sunucunun çalıştığı ortama ekleyin.
+
+Güvenlik:
+
+- `TELEGRAM_BOT_TOKEN` değerini istemciye taşımayın, yalnızca backend'de saklayın.
+- Hata loglarında token ve chat id yazdırmayın.
+
 ## Notlar
 
 - Mağaza siteleri yapı veya koruma değişikliklerinde adapter’ların güncellenmesi gerekebilir.

@@ -19,6 +19,13 @@ export type FetchConfigFile = {
    * Ortam: FETCH_MAX_PRODUCTS_PER_STORE (sayı; öncelikli).
    */
   maxProductsPerStore?: number;
+  telegram?: {
+    enabled?: boolean;
+    botToken?: string;
+    chatId?: string;
+    cooldownMin?: number;
+    timeoutMs?: number;
+  };
 };
 
 export type ResolvedFetchConfig = {
@@ -30,6 +37,13 @@ export type ResolvedFetchConfig = {
   playwrightUseChrome: boolean | null;
   playwrightUseEdge: boolean | null;
   maxProductsPerStore: number;
+  telegram: {
+    enabled: boolean;
+    botToken: string;
+    chatId: string;
+    cooldownMin: number;
+    timeoutMs: number;
+  };
 };
 
 const DEFAULTS: ResolvedFetchConfig = {
@@ -41,6 +55,13 @@ const DEFAULTS: ResolvedFetchConfig = {
   playwrightUseChrome: null,
   playwrightUseEdge: null,
   maxProductsPerStore: 15,
+  telegram: {
+    enabled: false,
+    botToken: "",
+    chatId: "",
+    cooldownMin: 15,
+    timeoutMs: 8000,
+  },
 };
 
 function resolveFetchConfigPath(): string | undefined {
@@ -75,6 +96,24 @@ function clampMaxProductsPerStore(n: unknown): number {
   return x;
 }
 
+function clampCooldownMin(n: unknown): number {
+  const d = DEFAULTS.telegram.cooldownMin;
+  if (typeof n !== "number" || !Number.isFinite(n)) return d;
+  const x = Math.floor(n);
+  if (x < 1) return 1;
+  if (x > 1440) return 1440;
+  return x;
+}
+
+function clampTimeoutMs(n: unknown): number {
+  const d = DEFAULTS.telegram.timeoutMs;
+  if (typeof n !== "number" || !Number.isFinite(n)) return d;
+  const x = Math.floor(n);
+  if (x < 500) return 500;
+  if (x > 60000) return 60000;
+  return x;
+}
+
 function mergeFromFile(base: ResolvedFetchConfig): ResolvedFetchConfig {
   const filePath = resolveFetchConfigPath();
   if (!filePath) return base;
@@ -87,7 +126,7 @@ function mergeFromFile(base: ResolvedFetchConfig): ResolvedFetchConfig {
     return base;
   }
 
-  const out = { ...base };
+  const out = { ...base, telegram: { ...base.telegram } };
   if (typeof file.forcePlaywright === "boolean") out.forcePlaywright = file.forcePlaywright;
   if (typeof file.curlVerboseLog === "boolean") out.curlVerboseLog = file.curlVerboseLog;
   if (typeof file.playwrightVisible === "boolean") out.playwrightVisible = file.playwrightVisible;
@@ -97,6 +136,13 @@ function mergeFromFile(base: ResolvedFetchConfig): ResolvedFetchConfig {
   if (file.playwrightUseChrome !== undefined) out.playwrightUseChrome = file.playwrightUseChrome;
   if (file.playwrightUseEdge !== undefined) out.playwrightUseEdge = file.playwrightUseEdge;
   if (file.maxProductsPerStore !== undefined) out.maxProductsPerStore = clampMaxProductsPerStore(file.maxProductsPerStore);
+  if (file.telegram) {
+    if (typeof file.telegram.enabled === "boolean") out.telegram.enabled = file.telegram.enabled;
+    if (typeof file.telegram.botToken === "string") out.telegram.botToken = file.telegram.botToken;
+    if (typeof file.telegram.chatId === "string") out.telegram.chatId = file.telegram.chatId;
+    if (file.telegram.cooldownMin !== undefined) out.telegram.cooldownMin = clampCooldownMin(file.telegram.cooldownMin);
+    if (file.telegram.timeoutMs !== undefined) out.telegram.timeoutMs = clampTimeoutMs(file.telegram.timeoutMs);
+  }
 
   return out;
 }
@@ -139,7 +185,7 @@ let cached: ResolvedFetchConfig | null = null;
 /** Dosya + ortam birleşimi; ortam değişkenleri dosyayı geçersiz kılar (forcePlaywright, curl verbose için). */
 export function getFetchConfig(): ResolvedFetchConfig {
   if (cached) return cached;
-  const fromFile = mergeFromFile({ ...DEFAULTS });
+  const fromFile = mergeFromFile({ ...DEFAULTS, telegram: { ...DEFAULTS.telegram } });
   cached = applyEnvOverrides(fromFile);
   return cached;
 }
