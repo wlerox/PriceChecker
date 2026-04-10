@@ -5,6 +5,7 @@ import { fetchTextCurl } from "../curlFetch.ts";
 import { isFetchForcePlaywright } from "../playwrightFetch.ts";
 import { scrapeCiceksepetiListingPages } from "../playwrightCiceksepeti.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
+import { filterProductsByPriceRange, type PriceRange } from "../priceRange.ts";
 
 const SITE = "https://www.ciceksepeti.com";
 const SUGGEST_API = "https://cs-web.ciceksepeti.com/store/api/v1/suggests/ch/search";
@@ -61,7 +62,7 @@ async function resolveSuggestPath(query: string): Promise<string | null> {
   return null;
 }
 
-export async function searchCiceksepeti(query: string): Promise<Product[]> {
+export async function searchCiceksepeti(query: string, priceRange?: PriceRange): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = query.trim();
   if (!q) return [];
@@ -91,29 +92,25 @@ export async function searchCiceksepeti(query: string): Promise<Product[]> {
       if (html.length < 800) continue;
       const parsed = parseCiceksepetiListingHtml(html);
       if (parsed.length > 0) {
-        return takeCheapestProducts(
-          parsed.map((r) => ({
-            store: "Çiçeksepeti",
-            title: r.title,
-            price: r.price,
-            currency: "TRY",
-            url: r.url,
-          })),
-          max
-        );
+        const mapped = parsed.map((r) => ({
+          store: "Çiçeksepeti",
+          title: r.title,
+          price: r.price,
+          currency: "TRY",
+          url: r.url,
+        }));
+        return takeCheapestProducts(filterProductsByPriceRange(mapped, priceRange), max);
       }
     }
   }
 
   const scraped = await scrapeCiceksepetiListingPages(urls);
-  return takeCheapestProducts(
-    scraped.map((r) => ({
-      store: "Çiçeksepeti",
-      title: r.title,
-      price: r.price,
-      currency: "TRY",
-      url: r.url,
-    })),
-    max
-  );
+  const mapped = scraped.map((r) => ({
+    store: "Çiçeksepeti",
+    title: r.title,
+    price: r.price,
+    currency: "TRY",
+    url: r.url,
+  }));
+  return takeCheapestProducts(filterProductsByPriceRange(mapped, priceRange), max);
 }

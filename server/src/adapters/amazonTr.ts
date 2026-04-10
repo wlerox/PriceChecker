@@ -7,6 +7,7 @@ import { fetchAmazonWithPaging } from "../playwrightAmazon.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
 import { foldForMatch, filterProductsByQuery } from "../relevance.ts";
+import { filterProductsByPriceRange, type PriceRange } from "../priceRange.ts";
 
 const BASE = "https://www.amazon.com.tr";
 const TIMEOUT_MS = 55_000;
@@ -132,14 +133,15 @@ function dedupeByUrl(items: Product[]): Product[] {
   });
 }
 
-function evaluateProducts(html: string, query: string, max: number) {
+function evaluateProducts(html: string, query: string, max: number, priceRange?: PriceRange) {
   const all = dedupeByUrl(parseProductsFromHtml(html));
-  const relevant = filterProductsByQuery(query, all);
+  const relevantByQuery = filterProductsByQuery(query, all);
+  const relevant = filterProductsByPriceRange(relevantByQuery, priceRange);
   const good = relevant.filter((p) => !isLikelyAccessory(p.title));
   return { all, relevant, good };
 }
 
-export async function searchAmazonTr(query: string): Promise<Product[]> {
+export async function searchAmazonTr(query: string, priceRange?: PriceRange): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim()).replace(/%20/g, "+");
   const url = `${BASE}/s?k=${q}&s=price-asc-rank`;
@@ -149,7 +151,7 @@ export async function searchAmazonTr(query: string): Promise<Product[]> {
     try {
       const curlHtml = await fetchTextCurl(url, { referer: `${BASE}/` });
       if (curlHtml && curlHtml.length > 200 && hasAmazonSearchGrid(curlHtml) && !isAmazonErrorPage(curlHtml)) {
-        const { all, relevant, good } = evaluateProducts(curlHtml, query, max);
+        const { all, relevant, good } = evaluateProducts(curlHtml, query, max, priceRange);
         if (good.length >= max) {
           const result = pickBestAmazonProducts(relevant, max);
           console.info(`[Amazon TR] curl ok → ${all.length} aday, ${relevant.length} eşleşen, ${good.length} ana ürün → seçilen ${result.length}`);
@@ -168,7 +170,7 @@ export async function searchAmazonTr(query: string): Promise<Product[]> {
   const html = await fetchAmazonWithPaging(
     url,
     (combinedHtml, pageNum) => {
-      const { all, relevant, good } = evaluateProducts(combinedHtml, query, max);
+      const { all, relevant, good } = evaluateProducts(combinedHtml, query, max, priceRange);
       console.info(`[Amazon TR] sayfa ${pageNum} → ${all.length} aday, ${relevant.length} eşleşen, ${good.length} ana ürün (hedef=${max})`);
       return good.length >= max;
     },
@@ -180,7 +182,7 @@ export async function searchAmazonTr(query: string): Promise<Product[]> {
     throw new Error("Amazon TR arama sayfası yüklenemedi (bot algılandı veya site hatası)");
   }
 
-  const { all, relevant } = evaluateProducts(html, query, max);
+  const { all, relevant } = evaluateProducts(html, query, max, priceRange);
   const result = pickBestAmazonProducts(relevant, max);
   console.info(`[Amazon TR] toplam: ${all.length} aday → sorgu eşleşen ${relevant.length} → seçilen ${result.length} (max=${max})`);
   return result;

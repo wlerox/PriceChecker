@@ -6,6 +6,7 @@ import { fetchTextCurl, fetchTextCurlWithSession } from "../curlFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
+import { filterProductsByPriceRange, type PriceRange } from "../priceRange.ts";
 
 const BASE = "https://www.hepsiburada.com";
 
@@ -131,7 +132,7 @@ function hbMaxSearchPages(): number {
   return 10;
 }
 
-export async function searchHepsiburada(query: string): Promise<Product[]> {
+export async function searchHepsiburada(query: string, priceRange?: PriceRange): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const parseLimit = 100;
   const maxPages = hbMaxSearchPages();
@@ -164,13 +165,15 @@ export async function searchHepsiburada(query: string): Promise<Product[]> {
     }
 
     const relevant = filterProductsByQuery(query, merged);
-    if (relevant.length >= max) break;
+    const inRange = filterProductsByPriceRange(relevant, priceRange);
+    if (inRange.length >= max) break;
 
     if (page > 1 && newUrls === 0) break;
     if (batch.length === 0) break;
   }
 
-  const relevant = filterProductsByQuery(query, merged);
+  let relevant = filterProductsByQuery(query, merged);
+  relevant = filterProductsByPriceRange(relevant, priceRange);
   return takeCheapestProducts(relevant, max);
 }
 

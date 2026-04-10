@@ -582,6 +582,8 @@ form.addEventListener("submit", async (e) => {
     const params = new URLSearchParams({ q });
     if (typeRaw !== undefined && typeRaw !== "") params.set("type", typeRaw);
     params.set("stores", selectedStores.join(","));
+    if (priceMinEl.value.trim() !== "") params.set("priceMin", priceMinEl.value.trim());
+    if (priceMaxEl.value.trim() !== "") params.set("priceMax", priceMaxEl.value.trim());
     const res = await fetch(apiUrl(`/api/search/stream?${params.toString()}`));
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

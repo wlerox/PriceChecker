@@ -3,6 +3,7 @@ import type { Product } from "../../shared/types.ts";
 import { sortProductsByPriceAsc } from "./sortProducts.ts";
 import { applyRelevanceFilters } from "./relevance.ts";
 import type { StoreJob } from "./storeJobs.ts";
+import { filterProductsByPriceRange, type PriceRange } from "./priceRange.ts";
 
 type StreamLineStore = { type: "store"; store: string; products: Product[] };
 type StreamLineError = { type: "error"; store: string; message: string };
@@ -25,7 +26,8 @@ export async function writeSearchNdjsonStream(
   res: Response,
   query: string,
   searchType: string | undefined,
-  jobs: StoreJob[]
+  jobs: StoreJob[],
+  priceRange?: PriceRange,
 ): Promise<void> {
   res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache");
@@ -58,6 +60,7 @@ export async function writeSearchNdjsonStream(
 
     if (winner.v.ok) {
       let relevant = applyRelevanceFilters(query, searchType, winner.v.products);
+      relevant = filterProductsByPriceRange(relevant, priceRange);
       relevant = sortProductsByPriceAsc(relevant);
       const line: StreamLineStore = { type: "store", store: winner.name, products: relevant };
       res.write(JSON.stringify(line) + "\n");

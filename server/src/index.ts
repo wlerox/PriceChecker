@@ -7,6 +7,7 @@ import { applyRelevanceFilters } from "./relevance.ts";
 import { runWithRelevanceLoggingAsync } from "./relevanceLoggingContext.ts";
 import { createStoreJobs } from "./storeJobs.ts";
 import { writeSearchNdjsonStream } from "./streamSearch.ts";
+import { filterProductsByPriceRange, parsePriceRangeFromQuery } from "./priceRange.ts";
 
 function parseStoresQuery(raw: string | string[] | undefined): string[] | undefined {
   if (raw == null) return undefined;
@@ -82,8 +83,17 @@ app.get("/api/search", async (req, res) => {
   const searchTypeRaw = typeof req.query.type === "string" ? req.query.type.trim() : "";
   const searchType = searchTypeRaw.length > 0 ? searchTypeRaw : undefined;
   const onlyStores = parseStoresQuery(req.query.stores as string | string[] | undefined);
+  const priceRangeResult = parsePriceRangeFromQuery(
+    typeof req.query.priceMin === "string" ? req.query.priceMin : undefined,
+    typeof req.query.priceMax === "string" ? req.query.priceMax : undefined,
+  );
+  if (!priceRangeResult.ok) {
+    res.status(400).json({ error: priceRangeResult.error });
+    return;
+  }
+  const priceRange = priceRangeResult.range;
 
-  const jobs = createStoreJobs(q, searchType, onlyStores);
+  const jobs = createStoreJobs(q, searchType, onlyStores, priceRange);
   if (jobs.length === 0) {
     res.status(400).json({ error: "En az bir geçerli mağaza seçin (stores parametresi)." });
     return;
@@ -107,6 +117,7 @@ app.get("/api/search", async (req, res) => {
     });
 
     let relevant = applyRelevanceFilters(q, searchType, results);
+    relevant = filterProductsByPriceRange(relevant, priceRange);
     relevant = sortProductsByPriceAsc(relevant);
 
     const body: SearchResponse = {
@@ -131,15 +142,24 @@ app.get("/api/search/stream", async (req, res) => {
   const searchTypeRaw = typeof req.query.type === "string" ? req.query.type.trim() : "";
   const searchType = searchTypeRaw.length > 0 ? searchTypeRaw : undefined;
   const onlyStores = parseStoresQuery(req.query.stores as string | string[] | undefined);
+  const priceRangeResult = parsePriceRangeFromQuery(
+    typeof req.query.priceMin === "string" ? req.query.priceMin : undefined,
+    typeof req.query.priceMax === "string" ? req.query.priceMax : undefined,
+  );
+  if (!priceRangeResult.ok) {
+    res.status(400).json({ error: priceRangeResult.error });
+    return;
+  }
+  const priceRange = priceRangeResult.range;
 
   try {
-    const jobs = createStoreJobs(q, searchType, onlyStores);
+    const jobs = createStoreJobs(q, searchType, onlyStores, priceRange);
     if (jobs.length === 0) {
       res.status(400).json({ error: "En az bir geçerli mağaza seçin (stores parametresi)." });
       return;
     }
     await runWithRelevanceLoggingAsync(jobs.length === 1, () =>
-      writeSearchNdjsonStream(res, q, searchType, jobs),
+      writeSearchNdjsonStream(res, q, searchType, jobs, priceRange),
     );
   } catch (e) {
     if (!res.headersSent) {

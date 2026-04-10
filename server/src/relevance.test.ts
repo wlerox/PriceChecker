@@ -106,8 +106,8 @@ test("dizüstü: Laptop Adaptörü başlığı laptop kelimesi yüzünden tutulm
 });
 
 test("applyRelevanceFilters: kategori tek başına her şeyi silerse sorgu eşleşenleri döner", () => {
-  const rows = [p("HAMA Laptop Adaptörü Güç Kablosu")];
-  const out = applyRelevanceFilters("laptop", "dizüstü bilgisayar", rows);
+  const rows = [p("MSI Gaming Laptop i7 16GB")];
+  const out = applyRelevanceFilters("laptop", "dizüstü bilgisayar", rows, false);
   assert.equal(out.length, 1);
   assert.ok(out[0].title.includes("Laptop"));
 });

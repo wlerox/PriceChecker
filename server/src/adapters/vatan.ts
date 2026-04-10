@@ -6,6 +6,7 @@ import { fetchTextPlaywright, isFetchForcePlaywright } from "../playwrightFetch.
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
+import { filterProductsByPriceRange, type PriceRange } from "../priceRange.ts";
 
 const BASE = "https://www.vatanbilgisayar.com";
 
@@ -106,7 +107,7 @@ function buildListUrl(keywordPath: string, categorySeg: string | undefined): str
 /**
  * @param typeHint — İstemciden `type` (örn. "Ekran kartı"); Vatan kategori URL’sine çevrilir.
  */
-export async function searchVatan(query: string, typeHint?: string): Promise<Product[]> {
+export async function searchVatan(query: string, typeHint?: string, priceRange?: PriceRange): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const slugs = slugCandidates(query);
   if (!slugs.length) return [];
@@ -153,7 +154,8 @@ export async function searchVatan(query: string, typeHint?: string): Promise<Pro
         }
       }
       const parsed = parseVatanHtml(html, PARSE_LIST_LIMIT);
-      const relevant = filterProductsByQuery(query, parsed);
+      let relevant = filterProductsByQuery(query, parsed);
+      relevant = filterProductsByPriceRange(relevant, priceRange);
       if (relevant.length > 0) return takeCheapestProducts(relevant, max);
     }
   }

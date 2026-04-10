@@ -4,6 +4,7 @@ import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
 import { fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
+import { filterProductsByPriceRange, type PriceRange } from "../priceRange.ts";
 
 const BASE = "https://www.pttavm.com";
 
@@ -91,7 +92,7 @@ function productsFromCards(html: string, max: number): Product[] {
   return out;
 }
 
-export async function searchPttAvm(query: string): Promise<Product[]> {
+export async function searchPttAvm(query: string, priceRange?: PriceRange): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
   const url = `${BASE}/arama?order=price_asc&q=${q}`;
@@ -108,7 +109,7 @@ export async function searchPttAvm(query: string): Promise<Product[]> {
     out = productsFromCards(html, max);
   }
 
-  return takeCheapestProducts(dedupeByUrl(out), max);
+  return takeCheapestProducts(filterProductsByPriceRange(dedupeByUrl(out), priceRange), max);
 }
 
 function dedupeByUrl(items: Product[]): Product[] {

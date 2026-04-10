@@ -6,6 +6,11 @@ import { fetchMediaMarktSearchHtmlWithPlaywright } from "../playwrightMediaMarkt
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
+import {
+  filterProductsByPriceRange,
+  pageHasOnlyAboveMax,
+  type PriceRange,
+} from "../priceRange.ts";
 
 const BASE = "https://www.mediamarkt.com.tr";
 
@@ -124,7 +129,7 @@ function mmMaxSearchPages(): number {
  * Playwright ile arama sayfası yüklenir (sonuçlar istemci tarafında).
  * `MEDIAMARKT_NO_PLAYWRIGHT=1` ile devre dışı (boş dizi).
  */
-export async function searchMediaMarkt(query: string): Promise<Product[]> {
+export async function searchMediaMarkt(query: string, priceRange?: PriceRange): Promise<Product[]> {
   if (process.env.MEDIAMARKT_NO_PLAYWRIGHT === "1") return [];
 
   const max = getMaxProductsPerStore();
@@ -153,13 +158,16 @@ export async function searchMediaMarkt(query: string): Promise<Product[]> {
       }
 
       const relevant = filterProductsByQuery(query, merged);
-      if (relevant.length >= max) break;
+      const inRange = filterProductsByPriceRange(relevant, priceRange);
+      if (inRange.length >= max) break;
+      if (pageHasOnlyAboveMax(batch, priceRange)) break;
 
       if (page > 1 && newUrls === 0) break;
       if (batch.length === 0) break;
     }
 
-    const relevant = filterProductsByQuery(query, merged);
+    let relevant = filterProductsByQuery(query, merged);
+    relevant = filterProductsByPriceRange(relevant, priceRange);
     return takeCheapestProducts(relevant, max);
   } catch (e) {
     console.warn("[MediaMarkt]", e instanceof Error ? e.message : String(e));
