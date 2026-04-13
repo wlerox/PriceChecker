@@ -11,6 +11,9 @@ import { searchMediaMarkt } from "./adapters/mediamarkt.ts";
 import { searchCiceksepeti } from "./adapters/ciceksepeti.ts";
 import { searchTeknosa } from "./adapters/teknosa.ts";
 import { searchKoctas } from "./adapters/koctas.ts";
+import { searchCimri } from "./adapters/cimri.ts";
+import { searchAkakce } from "./adapters/akakce.ts";
+import { searchGoogleShopping } from "./adapters/googleShopping.ts";
 import type { PriceRange } from "./priceRange.ts";
 
 export type StoreJob = { name: string; fn: () => Promise<Product[]> };
@@ -29,6 +32,9 @@ export const KNOWN_STORE_NAMES = [
   "Çiçeksepeti",
   "Teknosa",
   "Koçtaş",
+  "Cimri",
+  "Akakçe",
+  "Google Alışveriş",
 ] as const;
 
 const KNOWN_SET = new Set<string>(KNOWN_STORE_NAMES);
@@ -56,6 +62,9 @@ export function createStoreJobs(
     { name: "Çiçeksepeti", fn: () => searchCiceksepeti(q, priceRange, exactMatch) },
     { name: "Teknosa", fn: () => searchTeknosa(q, priceRange, exactMatch) },
     { name: "Koçtaş", fn: () => searchKoctas(q, priceRange, exactMatch) },
+    { name: "Cimri", fn: () => searchCimri(q, priceRange, exactMatch) },
+    { name: "Akakçe", fn: () => searchAkakce(q, priceRange, exactMatch) },
+    { name: "Google Alışveriş", fn: () => searchGoogleShopping(q, priceRange, exactMatch) },
   ];
 
   if (!onlyStores?.length) return all;

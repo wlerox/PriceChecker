@@ -26,6 +26,9 @@ const STORE_OPTIONS = [
   "Çiçeksepeti",
   "Teknosa",
   "Koçtaş",
+  "Cimri",
+  "Akakçe",
+  "Google Alışveriş",
 ] as const;
 
 /** Üst kategori → alt kategori; API `type` için alt satırın apiValue’su veya üst varsayılanı kullanılır. */
@@ -105,7 +108,7 @@ app.innerHTML = `
   <main class="layout">
     <header class="header">
       <h1>TR fiyat karşılaştırma</h1>
-      <p class="sub">Trendyol, Hepsiburada, Amazon TR, N11, Pazarama, İdefix, Vatan, PTT Avm, MediaMarkt, Çiçeksepeti, Teknosa, Koçtaş — yerelde çalışır, veri saklanmaz.</p>
+      <p class="sub">Trendyol, Hepsiburada, Amazon TR, N11, Pazarama, İdefix, Vatan, PTT Avm, MediaMarkt, Çiçeksepeti, Teknosa, Koçtaş, Cimri, Akakçe, Google Alışveriş — yerelde çalışır, veri saklanmaz.</p>
     </header>
 
     <aside class="filters filters--bar" id="filters" aria-label="Filtreler">

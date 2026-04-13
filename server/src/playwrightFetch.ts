@@ -27,6 +27,11 @@ export type FetchTextPlaywrightOptions = {
   dismissCookieConsentSelectors?: string[];
 };
 
+export type FetchTextCurlThenPlaywrightOptions = {
+  /** true dönerse curl yanıtı yetersiz kabul edilir ve Playwright fallback denenir. */
+  shouldFallbackToPlaywright?: (html: string) => boolean;
+};
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -142,7 +147,8 @@ export async function fetchTextCurlThenPlaywright(
   url: string,
   curlOptions?: FetchTextCurlOptions,
   playwrightOptions?: FetchTextPlaywrightOptions,
-  logLabel?: string
+  logLabel?: string,
+  options?: FetchTextCurlThenPlaywrightOptions,
 ): Promise<string> {
   const label = logLabel ?? playwrightOptions?.logLabel;
   const mergedPw: FetchTextPlaywrightOptions = { ...playwrightOptions, logLabel: label };
@@ -156,6 +162,10 @@ export async function fetchTextCurlThenPlaywright(
   try {
     const html = await fetchTextCurl(url, curlOptions);
     if (html && html.length > 20) {
+      if (options?.shouldFallbackToPlaywright?.(html) === true) {
+        console.warn(`${tag(label)} curl blocked/challenge → playwright | url=${url}`);
+        return await fetchTextPlaywright(url, mergedPw);
+      }
       if (curlVerbose()) {
         const ms = Date.now() - t0;
         console.info(`${tag(label)} curl ok | url=${url} | bytes=${html.length} | ${ms}ms`);

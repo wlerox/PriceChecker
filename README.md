@@ -1,6 +1,6 @@
 # TR fiyat karşılaştırma (yerel)
 
-Arama kutusuna yazdığınız sorgu için **Trendyol**, **Hepsiburada**, **Amazon TR** ve **N11** üzerinde sunucu tarafında paralel arama yapar; sonuçları fiyata göre sıralar ve **en düşük fiyatlı** satırı vurgular. Veritabanı yok; sonuçlar yalnızca o anki istek için bellekte tutulur.
+Arama kutusuna yazdığınız sorgu için **Trendyol**, **Hepsiburada**, **Amazon TR**, **N11**, **Pazarama**, **İdefix**, **Vatan**, **PTT Avm**, **MediaMarkt**, **Çiçeksepeti**, **Teknosa**, **Koçtaş**, **Cimri**, **Akakçe** ve **Google Alışveriş** üzerinde sunucu tarafında paralel arama yapar; sonuçları fiyata göre sıralar ve **en düşük fiyatlı** satırı vurgular. Veritabanı yok; sonuçlar yalnızca o anki istek için bellekte tutulur.
 
 ## Gereksinimler
 
