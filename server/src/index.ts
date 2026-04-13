@@ -8,6 +8,7 @@ import { applyRelevanceFilters } from "./relevance.ts";
 import { runWithRelevanceLoggingAsync } from "./relevanceLoggingContext.ts";
 import { createStoreJobs, type StoreJob } from "./storeJobs.ts";
 import { writeSearchNdjsonStream } from "./streamSearch.ts";
+import { filterProductsByPriceRange, parsePriceRangeFromQuery } from "./priceRange.ts";
 import { sendBestPriceTelegramMessage } from "./services/telegramNotifier.ts";
 
 function parseStoresQuery(raw: string | string[] | undefined): string[] | undefined {
@@ -83,6 +84,25 @@ export function createApp(deps: SearchDeps = {}) {
     res.json({ ok: true });
   });
 
+/** Tüm mağazalar aynı anda sorgulanır; yanıt tüm sonuçlar hazır olunca döner. */
+app.get("/api/search", async (req, res) => {
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  if (!q) {
+    res.status(400).json({ error: "q parametresi gerekli" });
+    return;
+  }
+  const searchTypeRaw = typeof req.query.type === "string" ? req.query.type.trim() : "";
+  const searchType = searchTypeRaw.length > 0 ? searchTypeRaw : undefined;
+  const onlyStores = parseStoresQuery(req.query.stores as string | string[] | undefined);
+  const priceRangeResult = parsePriceRangeFromQuery(
+    typeof req.query.priceMin === "string" ? req.query.priceMin : undefined,
+    typeof req.query.priceMax === "string" ? req.query.priceMax : undefined,
+  );
+  if (!priceRangeResult.ok) {
+    res.status(400).json({ error: priceRangeResult.error });
+    return;
+  }
+  const priceRange = priceRangeResult.range;
   /** Tüm mağazalar aynı anda sorgulanır; yanıt tüm sonuçlar hazır olunca döner. */
   app.get("/api/search", async (req, res) => {
     const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
@@ -94,6 +114,11 @@ export function createApp(deps: SearchDeps = {}) {
     const searchType = searchTypeRaw.length > 0 ? searchTypeRaw : undefined;
     const onlyStores = parseStoresQuery(req.query.stores as string | string[] | undefined);
 
+  const jobs = createStoreJobs(q, searchType, onlyStores, priceRange);
+  if (jobs.length === 0) {
+    res.status(400).json({ error: "En az bir geçerli mağaza seçin (stores parametresi)." });
+    return;
+  }
     const jobs = createStoreJobsFn(q, searchType, onlyStores);
     if (jobs.length === 0) {
       res.status(400).json({ error: "En az bir geçerli mağaza seçin (stores parametresi)." });
@@ -117,6 +142,9 @@ export function createApp(deps: SearchDeps = {}) {
         }
       });
 
+    let relevant = applyRelevanceFilters(q, searchType, results);
+    relevant = filterProductsByPriceRange(relevant, priceRange);
+    relevant = sortProductsByPriceAsc(relevant);
       let relevant = applyRelevanceFilters(q, searchType, results);
       relevant = sortProductsByPriceAsc(relevant);
 
@@ -145,6 +173,44 @@ export function createApp(deps: SearchDeps = {}) {
     });
   });
 
+/**
+ * Mağazalar yine paralel; her mağaza bitince bir NDJSON satırı gelir (ilk sonuçlar beklemeden işlenir).
+ */
+app.get("/api/search/stream", async (req, res) => {
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  if (!q) {
+    res.status(400).json({ error: "q parametresi gerekli" });
+    return;
+  }
+  const searchTypeRaw = typeof req.query.type === "string" ? req.query.type.trim() : "";
+  const searchType = searchTypeRaw.length > 0 ? searchTypeRaw : undefined;
+  const onlyStores = parseStoresQuery(req.query.stores as string | string[] | undefined);
+  const priceRangeResult = parsePriceRangeFromQuery(
+    typeof req.query.priceMin === "string" ? req.query.priceMin : undefined,
+    typeof req.query.priceMax === "string" ? req.query.priceMax : undefined,
+  );
+  if (!priceRangeResult.ok) {
+    res.status(400).json({ error: priceRangeResult.error });
+    return;
+  }
+  const priceRange = priceRangeResult.range;
+
+  try {
+    const jobs = createStoreJobs(q, searchType, onlyStores, priceRange);
+    if (jobs.length === 0) {
+      res.status(400).json({ error: "En az bir geçerli mağaza seçin (stores parametresi)." });
+      return;
+    }
+    await runWithRelevanceLoggingAsync(jobs.length === 1, () =>
+      writeSearchNdjsonStream(res, q, searchType, jobs, priceRange),
+    );
+  } catch (e) {
+    if (!res.headersSent) {
+      const msg = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: msg });
+    }
+  }
+});
   /**
    * Mağazalar yine paralel; her mağaza bitince bir NDJSON satırı gelir (ilk sonuçlar beklemeden işlenir).
    */

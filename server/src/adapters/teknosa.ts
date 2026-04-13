@@ -5,6 +5,11 @@ import { fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
+import {
+  filterProductsByPriceRange,
+  pageHasOnlyAboveMax,
+  type PriceRange,
+} from "../priceRange.ts";
 
 const BASE = "https://www.teknosa.com";
 /** Sayfa limiti yok; budget (timeout) dolana veya yeni ürün kalmayınca durur. */
@@ -118,7 +123,7 @@ function parseTeknosaHtml(html: string): Product[] {
   return merged;
 }
 
-export async function searchTeknosa(query: string): Promise<Product[]> {
+export async function searchTeknosa(query: string, priceRange?: PriceRange): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const budget = budgetMs();
   const t0 = Date.now();
@@ -174,8 +179,13 @@ export async function searchTeknosa(query: string): Promise<Product[]> {
       }
 
       const relevant = filterProductsByQuery(query, allProducts, pageMap);
-      if (relevant.length >= max) {
-        console.info(`[fetch:Teknosa] yeterli eşleşen ürün (${relevant.length}/${max}), sayfalama durdu`);
+      const inRange = filterProductsByPriceRange(relevant, priceRange);
+      if (inRange.length >= max) {
+        console.info(`[fetch:Teknosa] yeterli aralık içi ürün (${inRange.length}/${max}), sayfalama durdu`);
+        break;
+      }
+      if (pageHasOnlyAboveMax(items, priceRange)) {
+        console.info(`[fetch:Teknosa] sayfa ${pg} tamamen üst limitin üstünde, sayfalama durdu`);
         break;
       }
     } catch (e) {
@@ -185,7 +195,8 @@ export async function searchTeknosa(query: string): Promise<Product[]> {
     }
   }
 
-  const relevant = filterProductsByQuery(query, allProducts, pageMap);
+  let relevant = filterProductsByQuery(query, allProducts, pageMap);
+  relevant = filterProductsByPriceRange(relevant, priceRange);
   const result = takeCheapestProducts(relevant, max);
 
   console.info(

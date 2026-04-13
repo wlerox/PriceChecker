@@ -7,6 +7,7 @@ import { fetchKoctasSearchHtmlWithPlaywright } from "../playwrightKoctas.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
+import { filterProductsByPriceRange, type PriceRange } from "../priceRange.ts";
 
 const BASE = "https://www.koctas.com.tr";
 
@@ -89,7 +90,7 @@ function parseFromCards(html: string, max: number): Product[] {
   return out;
 }
 
-export async function searchKoctas(query: string): Promise<Product[]> {
+export async function searchKoctas(query: string, priceRange?: PriceRange): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
   const url = `${BASE}/search?q=${q}&sort=price-asc`;
@@ -127,6 +128,8 @@ export async function searchKoctas(query: string): Promise<Product[]> {
     }
   }
 
-  const relevant = filterProductsByQuery(query, merged);
-  return takeCheapestProducts(relevant.length > 0 ? relevant : merged, max);
+  let relevant = filterProductsByQuery(query, merged);
+  relevant = filterProductsByPriceRange(relevant, priceRange);
+  const fallback = filterProductsByPriceRange(merged, priceRange);
+  return takeCheapestProducts(relevant.length > 0 ? relevant : fallback, max);
 }

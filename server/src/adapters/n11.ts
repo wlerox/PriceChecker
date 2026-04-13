@@ -4,6 +4,11 @@ import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
 import { fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
+import {
+  filterProductsByPriceRange,
+  pageHasOnlyAboveMax,
+  type PriceRange,
+} from "../priceRange.ts";
 
 const BASE = "https://www.n11.com";
 
@@ -86,7 +91,7 @@ function parseProductListFromHtml(html: string): Product[] {
   return out;
 }
 
-export async function searchN11(query: string): Promise<Product[]> {
+export async function searchN11(query: string, priceRange?: PriceRange): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
   const merged: Product[] = [];
@@ -112,11 +117,14 @@ export async function searchN11(query: string): Promise<Product[]> {
     if (page.length === 0) break;
 
     const relevant = filterProductsByQuery(query, dedupeByUrl(merged));
-    if (relevant.length >= max) break;
+    const inRange = filterProductsByPriceRange(relevant, priceRange);
+    if (inRange.length >= max) break;
+    if (pageHasOnlyAboveMax(page, priceRange)) break;
   }
 
   const unique = dedupeByUrl(merged);
-  const relevant = filterProductsByQuery(query, unique);
+  let relevant = filterProductsByQuery(query, unique);
+  relevant = filterProductsByPriceRange(relevant, priceRange);
   relevant.sort((a, b) => a.price - b.price);
   return relevant.slice(0, max);
 }

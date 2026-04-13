@@ -4,6 +4,11 @@ import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
 import { launchChromiumPreferInstalled, playwrightHeadless } from "../playwrightLaunch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
+import {
+  filterProductsByPriceRange,
+  pageHasOnlyAboveMax,
+  type PriceRange,
+} from "../priceRange.ts";
 
 const BASE = "https://www.trendyol.com";
 
@@ -223,7 +228,7 @@ function collectProductsFromJson(value: unknown, depth: number, out: Product[], 
  * Tek Playwright oturumu: her `pi` sayfası için HTML parse.
  * Sayfa sınırı yok; `STREAM_PER_STORE_TIMEOUT_MS` (varsayılan 90s) dolana kadar devam eder.
  */
-export async function searchTrendyol(query: string): Promise<Product[]> {
+export async function searchTrendyol(query: string, priceRange?: PriceRange): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim().toLocaleLowerCase("tr"));
   const byUrl = new Map<string, Product>();
@@ -270,7 +275,9 @@ export async function searchTrendyol(query: string): Promise<Product[]> {
       if (batch.length === 0) break;
 
       const relevant = filterProductsByQuery(query, [...byUrl.values()]);
-      if (relevant.length >= max) break;
+      const inRange = filterProductsByPriceRange(relevant, priceRange);
+      if (inRange.length >= max) break;
+      if (pageHasOnlyAboveMax(batch, priceRange)) break;
     }
 
     await context.close();
@@ -279,7 +286,8 @@ export async function searchTrendyol(query: string): Promise<Product[]> {
   }
 
   const out = [...byUrl.values()];
-  const relevant = filterProductsByQuery(query, out);
+  let relevant = filterProductsByQuery(query, out);
+  relevant = filterProductsByPriceRange(relevant, priceRange);
   relevant.sort((a, b) => a.price - b.price);
   return relevant.slice(0, max);
 }
