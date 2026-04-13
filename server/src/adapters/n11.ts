@@ -7,6 +7,7 @@ import { filterProductsByQuery } from "../relevance.ts";
 import {
   filterProductsByPriceRange,
   pageHasOnlyAboveMax,
+  shouldStopByCheapestRelevantAboveMax,
   type PriceRange,
 } from "../priceRange.ts";
 
@@ -117,6 +118,7 @@ export async function searchN11(query: string, priceRange?: PriceRange): Promise
     if (page.length === 0) break;
 
     const relevant = filterProductsByQuery(query, dedupeByUrl(merged));
+    if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;
     const inRange = filterProductsByPriceRange(relevant, priceRange);
     if (inRange.length >= max) break;
     if (pageHasOnlyAboveMax(page, priceRange)) break;

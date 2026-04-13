@@ -1,12 +1,19 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
 import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
-import { fetchHepsiburadaSearchHtmlWithPlaywright } from "../playwrightHb.ts";
+import {
+  createHepsiburadaPlaywrightSession,
+  type HepsiburadaPlaywrightSession,
+} from "../playwrightHb.ts";
 import { fetchTextCurl, fetchTextCurlWithSession } from "../curlFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
-import { filterProductsByPriceRange, type PriceRange } from "../priceRange.ts";
+import {
+  filterProductsByPriceRange,
+  shouldStopByCheapestRelevantAboveMax,
+  type PriceRange,
+} from "../priceRange.ts";
 
 const BASE = "https://www.hepsiburada.com";
 
@@ -19,7 +26,11 @@ function isHbCaptchaPage(html: string): boolean {
 }
 
 /** Sitedeki “artan fiyat” ile uyumlu liste; karşılaştırma için düşükten yükseğe. */
-async function fetchSearchHtml(query: string, page = 1): Promise<string> {
+async function fetchSearchHtml(
+  query: string,
+  page = 1,
+  hbSession?: HepsiburadaPlaywrightSession,
+): Promise<string> {
   const q = encodeURIComponent(query.trim());
   const searchUrl =
     page <= 1
@@ -35,11 +46,9 @@ async function fetchSearchHtml(query: string, page = 1): Promise<string> {
     timeoutSec: 25,
   };
 
-  const usePw = process.env.HEPSIBURADA_NO_PLAYWRIGHT !== "1";
-
-  if (usePw) {
+  if (hbSession) {
     try {
-      const html = await fetchHepsiburadaSearchHtmlWithPlaywright(searchUrl, `${BASE}/`, query.trim());
+      const html = await hbSession.fetchSearchHtml(searchUrl);
       if (!isHbCaptchaPage(html)) {
         return html;
       }
@@ -138,38 +147,52 @@ export async function searchHepsiburada(query: string, priceRange?: PriceRange):
   const maxPages = hbMaxSearchPages();
   const merged: Product[] = [];
   const seen = new Set<string>();
+  const usePlaywright = process.env.HEPSIBURADA_NO_PLAYWRIGHT !== "1";
+  const hbSession = usePlaywright ? await createHepsiburadaPlaywrightSession().catch(() => null) : null;
 
-  for (let page = 1; page <= maxPages; page++) {
-    const html = await fetchSearchHtml(query, page);
+  try {
+    for (let page = 1; page <= maxPages; page++) {
+      const html = await fetchSearchHtml(query, page, hbSession ?? undefined);
 
-    let batch = parseHbListHtml(html, parseLimit);
-    if (batch.length === 0) {
-      batch = tryProductsFromNextData(html, parseLimit);
+      let batch = parseHbListHtml(html, parseLimit);
+      if (batch.length === 0) {
+        batch = tryProductsFromNextData(html, parseLimit);
+      }
+      if (batch.length === 0) {
+        batch = parseJsonLd(cheerio.load(html), parseLimit);
+      }
+
+      if (page === 1 && batch.length === 0 && isHbCaptchaPage(html)) {
+        throw new Error(
+          "Hepsiburada güvenlik doğrulaması istiyor; otomatik arama bu ağdan engellenmiş olabilir. Tarayıcıda hepsiburada.com açıp doğrulama yapın veya farklı internet bağlantısı deneyin."
+        );
+      }
+
+      let newUrls = 0;
+      for (const p of batch) {
+        if (seen.has(p.url)) continue;
+        seen.add(p.url);
+        merged.push(p);
+        newUrls++;
+      }
+
+      // Hepsiburada sonuçları artan fiyata göre geldiği için:
+      // o ana kadarki en ucuz ilgili ürün bile üst limiti aştıysa,
+      // sonraki sayfalarda aralığa düşen ürün beklenmez.
+      const relevantSoFar = filterProductsByQuery(query, merged);
+      if (shouldStopByCheapestRelevantAboveMax(relevantSoFar, priceRange)) break;
+
+      const relevant = relevantSoFar;
+      const inRange = filterProductsByPriceRange(relevant, priceRange);
+      if (inRange.length >= max) break;
+
+      if (page > 1 && newUrls === 0) break;
+      if (batch.length === 0) break;
     }
-    if (batch.length === 0) {
-      batch = parseJsonLd(cheerio.load(html), parseLimit);
+  } finally {
+    if (hbSession) {
+      await hbSession.close().catch(() => {});
     }
-
-    if (page === 1 && batch.length === 0 && isHbCaptchaPage(html)) {
-      throw new Error(
-        "Hepsiburada güvenlik doğrulaması istiyor; otomatik arama bu ağdan engellenmiş olabilir. Tarayıcıda hepsiburada.com açıp doğrulama yapın veya farklı internet bağlantısı deneyin."
-      );
-    }
-
-    let newUrls = 0;
-    for (const p of batch) {
-      if (seen.has(p.url)) continue;
-      seen.add(p.url);
-      merged.push(p);
-      newUrls++;
-    }
-
-    const relevant = filterProductsByQuery(query, merged);
-    const inRange = filterProductsByPriceRange(relevant, priceRange);
-    if (inRange.length >= max) break;
-
-    if (page > 1 && newUrls === 0) break;
-    if (batch.length === 0) break;
   }
 
   let relevant = filterProductsByQuery(query, merged);

@@ -9,6 +9,7 @@ import { takeCheapestProducts } from "../sortProducts.ts";
 import {
   filterProductsByPriceRange,
   pageHasOnlyAboveMax,
+  shouldStopByCheapestRelevantAboveMax,
   type PriceRange,
 } from "../priceRange.ts";
 
@@ -158,6 +159,7 @@ export async function searchMediaMarkt(query: string, priceRange?: PriceRange): 
       }
 
       const relevant = filterProductsByQuery(query, merged);
+      if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;
       const inRange = filterProductsByPriceRange(relevant, priceRange);
       if (inRange.length >= max) break;
       if (pageHasOnlyAboveMax(batch, priceRange)) break;

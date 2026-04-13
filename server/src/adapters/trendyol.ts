@@ -7,6 +7,7 @@ import { filterProductsByQuery } from "../relevance.ts";
 import {
   filterProductsByPriceRange,
   pageHasOnlyAboveMax,
+  shouldStopByCheapestRelevantAboveMax,
   type PriceRange,
 } from "../priceRange.ts";
 
@@ -275,6 +276,7 @@ export async function searchTrendyol(query: string, priceRange?: PriceRange): Pr
       if (batch.length === 0) break;
 
       const relevant = filterProductsByQuery(query, [...byUrl.values()]);
+      if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;
       const inRange = filterProductsByPriceRange(relevant, priceRange);
       if (inRange.length >= max) break;
       if (pageHasOnlyAboveMax(batch, priceRange)) break;

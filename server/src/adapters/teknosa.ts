@@ -6,8 +6,10 @@ import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
 import {
+  cheapestProductPrice,
   filterProductsByPriceRange,
   pageHasOnlyAboveMax,
+  shouldStopByCheapestRelevantAboveMax,
   type PriceRange,
 } from "../priceRange.ts";
 
@@ -179,6 +181,15 @@ export async function searchTeknosa(query: string, priceRange?: PriceRange): Pro
       }
 
       const relevant = filterProductsByQuery(query, allProducts, pageMap);
+      if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) {
+        const cheapestRelevantPrice = cheapestProductPrice(relevant);
+        if (cheapestRelevantPrice != null && priceRange?.max != null) {
+          console.info(
+            `[fetch:Teknosa] en ucuz eşleşen ürün üst limitte (${cheapestRelevantPrice} > ${priceRange.max}), sayfalama durdu`,
+          );
+        }
+        break;
+      }
       const inRange = filterProductsByPriceRange(relevant, priceRange);
       if (inRange.length >= max) {
         console.info(`[fetch:Teknosa] yeterli aralık içi ürün (${inRange.length}/${max}), sayfalama durdu`);

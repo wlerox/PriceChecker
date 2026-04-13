@@ -59,6 +59,28 @@ export function pageHasOnlyAboveMax(items: Product[], range: PriceRange | undefi
   return items.every((p) => isAboveMax(p.price, range));
 }
 
+export function cheapestProductPrice(items: Product[]): number | undefined {
+  if (items.length === 0) return undefined;
+  let min = Number.POSITIVE_INFINITY;
+  for (const item of items) {
+    if (Number.isFinite(item.price) && item.price < min) {
+      min = item.price;
+    }
+  }
+  return Number.isFinite(min) ? min : undefined;
+}
+
+/** Artan fiyat akışında, en ucuz ilgili ürün bile üst limiti aştıysa sayfalama durur. */
+export function shouldStopByCheapestRelevantAboveMax(
+  relevantItems: Product[],
+  range: PriceRange | undefined,
+): boolean {
+  if (!range || range.max == null) return false;
+  const cheapest = cheapestProductPrice(relevantItems);
+  if (cheapest == null) return false;
+  return cheapest > range.max;
+}
+
 export function filterProductsByPriceRange(items: Product[], range: PriceRange | undefined): Product[] {
   if (!hasPriceRange(range)) return items;
   return items.filter((p) => inPriceRange(p.price, range));
