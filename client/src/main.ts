@@ -202,6 +202,10 @@ app.innerHTML = `
         <option value="price-desc">Fiyat: Büyükten düşüğe</option>
         <option value="default">Fiyat: Varsayılan</option>
       </select>
+      <label class="check-row search-exact-row" title="Açıkken sorgu başlıkta bitişik/sıkı eşleşir">
+        <input type="checkbox" id="exact-match" />
+        <span>Tam eşleşme</span>
+      </label>
       <button type="submit" id="btn">Ara</button>
     </form>
 
@@ -245,6 +249,7 @@ const filterNote = document.getElementById("filter-note") as HTMLParagraphElemen
 const priceMinEl = document.getElementById("price-min") as HTMLInputElement;
 const priceMaxEl = document.getElementById("price-max") as HTMLInputElement;
 const sortByEl = document.getElementById("sort-by") as HTMLSelectElement;
+const exactMatchEl = document.getElementById("exact-match") as HTMLInputElement;
 const titleFilterEl = document.getElementById("title-filter") as HTMLInputElement | null;
 const onlyCheapestEl = document.getElementById("only-cheapest") as HTMLInputElement | null;
 const filterResetBtn = document.getElementById("filter-reset") as HTMLButtonElement;
@@ -511,6 +516,7 @@ function resetFilters(): void {
   priceMinEl.value = "";
   priceMaxEl.value = "";
   sortByEl.value = "price-asc";
+  exactMatchEl.checked = false;
   if (titleFilterEl) titleFilterEl.value = "";
   if (onlyCheapestEl) onlyCheapestEl.checked = false;
   if (rawResults.length) renderTable();
@@ -581,6 +587,7 @@ form.addEventListener("submit", async (e) => {
   try {
     const params = new URLSearchParams({ q });
     if (typeRaw !== undefined && typeRaw !== "") params.set("type", typeRaw);
+    if (exactMatchEl.checked) params.set("exactMatch", "1");
     params.set("stores", selectedStores.join(","));
     if (priceMinEl.value.trim() !== "") params.set("priceMin", priceMinEl.value.trim());
     if (priceMaxEl.value.trim() !== "") params.set("priceMax", priceMaxEl.value.trim());

@@ -45,32 +45,42 @@ function escapeRegExp(s: string): string {
 }
 
 /**
- * Uzun sorgularda (4+ anlamlı parça) tüm kelimeleri başlıkta aramak ucuz/kısa ilanları düşürür;
- * en fazla bir kelime eksik kalabilir. 1–3 parçada sıkı eşleşme korunur.
+ * Token için mevcut kelime/sayı eşleşme kurallarını koruyan RegExp üretir.
  */
-function titleMatchesQueryTokens(foldedTitle: string, foldedTokens: string[]): boolean {
+function buildTokenRegex(tok: string, flags = "u"): RegExp {
+  const esc = escapeRegExp(tok);
+  if (/\d/.test(tok)) {
+    const isAllDigits = /^\d+$/.test(tok);
+    const afterBound = isAllDigits ? `(?:$|[^\\d])` : `(?:$|[^\\p{L}\\p{N}])`;
+    return new RegExp(`(?:^|[^\\p{L}\\p{N}])${esc}${afterBound}|\\p{L}${esc}(?:$|[^\\d])`, flags);
+  }
+  // "ti", "se" gibi kısa tokenlar "karti", "bit" içinde yanlış eşleşmesin → kelime sınırı iste
+  if (tok.length <= 2) {
+    return new RegExp(`(?:^|[^\\p{L}])${esc}(?:$|[^\\p{L}])`, flags);
+  }
+  return new RegExp(esc, flags);
+}
+
+function titleMatchesQueryTokensInOrder(foldedTitle: string, foldedTokens: string[]): boolean {
+  let from = 0;
+  for (const tok of foldedTokens) {
+    const re = buildTokenRegex(tok, "gu");
+    re.lastIndex = from;
+    const found = re.exec(foldedTitle);
+    if (!found) return false;
+    // "RTX5050" gibi bitişik örneklerde ikinci tokenın bir önceki harfe bakabilmesi için
+    // sonraki aramayı bir karakter geri sararak başlat.
+    from = Math.max(0, re.lastIndex - 1);
+  }
+  return true;
+}
+
+function titleMatchesQueryTokensExactly(foldedTitle: string, foldedTokens: string[]): boolean {
   if (foldedTokens.length === 0) return true;
-  const matched = foldedTokens.filter((tok) => {
-    if (/\d/.test(tok)) {
-      const esc = escapeRegExp(tok);
-      const isAllDigits = /^\d+$/.test(tok);
-      const afterBound = isAllDigits ? `(?:$|[^\\d])` : `(?:$|[^\\p{L}\\p{N}])`;
-      const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])${esc}${afterBound}`, "u");
-      if (re.test(foldedTitle)) return true;
-      const glued = new RegExp(`\\p{L}${esc}(?:$|[^\\d])`, "u");
-      return glued.test(foldedTitle);
-    }
-    // "ti", "se" gibi kısa tokenlar "karti", "bit" içinde yanlış eşleşmesin → kelime sınırı iste
-    if (tok.length <= 2) {
-      const esc = escapeRegExp(tok);
-      const re = new RegExp(`(?:^|[^\\p{L}])${esc}(?:$|[^\\p{L}])`, "u");
-      return re.test(foldedTitle);
-    }
-    return foldedTitle.includes(tok);
-  }).length;
-  if (foldedTokens.length <= 3) return matched === foldedTokens.length;
-  const need = Math.max(2, foldedTokens.length - 1);
-  return matched >= need;
+  const escaped = foldedTokens.map(escapeRegExp);
+  const joined = escaped.join("[^\\p{L}\\p{N}]+");
+  const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])${joined}(?:$|[^\\p{L}\\p{N}])`, "u");
+  return re.test(foldedTitle);
 }
 
 /**
@@ -80,13 +90,16 @@ export function filterProductsByQuery(
   query: string,
   products: Product[],
   pageMap?: Map<string, number>,
+  exactMatch = false,
 ): Product[] {
   const tokens = [...new Set(queryTokensForMatch(query))];
   if (tokens.length === 0) return products;
   const foldedTokens = tokens.map(foldForMatch);
   return products.filter((p) => {
     const t = foldForMatch(p.title);
-    const ok = titleMatchesQueryTokens(t, foldedTokens);
+    const ok = exactMatch
+      ? titleMatchesQueryTokensExactly(t, foldedTokens)
+      : titleMatchesQueryTokensInOrder(t, foldedTokens);
     if (isRelevanceLoggingEnabled()) {
       const pg = pageMap?.get(p.url);
       const pgTag = pg != null ? ` sayfa=${pg}` : "";
@@ -130,10 +143,11 @@ export function filterProductsBySearchType(searchType: string | undefined, produ
 export function applyRelevanceFilters(
   query: string,
   searchType: string | undefined,
-  products: Product[]
+  products: Product[],
+  exactMatch = false,
 ): Product[] {
   if (products.length === 0) return [];
-  let relevant = filterProductsByQuery(query, products);
+  let relevant = filterProductsByQuery(query, products, undefined, exactMatch);
   relevant = filterProductsBySearchType(searchType, relevant);
   return relevant;
 }

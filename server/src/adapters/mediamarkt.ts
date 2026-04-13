@@ -130,7 +130,11 @@ function mmMaxSearchPages(): number {
  * Playwright ile arama sayfası yüklenir (sonuçlar istemci tarafında).
  * `MEDIAMARKT_NO_PLAYWRIGHT=1` ile devre dışı (boş dizi).
  */
-export async function searchMediaMarkt(query: string, priceRange?: PriceRange): Promise<Product[]> {
+export async function searchMediaMarkt(
+  query: string,
+  priceRange?: PriceRange,
+  exactMatch = false,
+): Promise<Product[]> {
   if (process.env.MEDIAMARKT_NO_PLAYWRIGHT === "1") return [];
 
   const max = getMaxProductsPerStore();
@@ -158,7 +162,7 @@ export async function searchMediaMarkt(query: string, priceRange?: PriceRange): 
         newUrls++;
       }
 
-      const relevant = filterProductsByQuery(query, merged);
+      const relevant = filterProductsByQuery(query, merged, undefined, exactMatch);
       if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;
       const inRange = filterProductsByPriceRange(relevant, priceRange);
       if (inRange.length >= max) break;
@@ -168,7 +172,7 @@ export async function searchMediaMarkt(query: string, priceRange?: PriceRange): 
       if (batch.length === 0) break;
     }
 
-    let relevant = filterProductsByQuery(query, merged);
+    let relevant = filterProductsByQuery(query, merged, undefined, exactMatch);
     relevant = filterProductsByPriceRange(relevant, priceRange);
     return takeCheapestProducts(relevant, max);
   } catch (e) {

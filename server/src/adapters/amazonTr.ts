@@ -133,15 +133,25 @@ function dedupeByUrl(items: Product[]): Product[] {
   });
 }
 
-function evaluateProducts(html: string, query: string, max: number, priceRange?: PriceRange) {
+function evaluateProducts(
+  html: string,
+  query: string,
+  max: number,
+  priceRange?: PriceRange,
+  exactMatch = false,
+) {
   const all = dedupeByUrl(parseProductsFromHtml(html));
-  const relevantByQuery = filterProductsByQuery(query, all);
+  const relevantByQuery = filterProductsByQuery(query, all, undefined, exactMatch);
   const relevant = filterProductsByPriceRange(relevantByQuery, priceRange);
   const good = relevant.filter((p) => !isLikelyAccessory(p.title));
   return { all, relevant, good };
 }
 
-export async function searchAmazonTr(query: string, priceRange?: PriceRange): Promise<Product[]> {
+export async function searchAmazonTr(
+  query: string,
+  priceRange?: PriceRange,
+  exactMatch = false,
+): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim()).replace(/%20/g, "+");
   const url = `${BASE}/s?k=${q}&s=price-asc-rank`;
@@ -151,7 +161,7 @@ export async function searchAmazonTr(query: string, priceRange?: PriceRange): Pr
     try {
       const curlHtml = await fetchTextCurl(url, { referer: `${BASE}/` });
       if (curlHtml && curlHtml.length > 200 && hasAmazonSearchGrid(curlHtml) && !isAmazonErrorPage(curlHtml)) {
-        const { all, relevant, good } = evaluateProducts(curlHtml, query, max, priceRange);
+        const { all, relevant, good } = evaluateProducts(curlHtml, query, max, priceRange, exactMatch);
         if (good.length >= max) {
           const result = pickBestAmazonProducts(relevant, max);
           console.info(`[Amazon TR] curl ok → ${all.length} aday, ${relevant.length} eşleşen, ${good.length} ana ürün → seçilen ${result.length}`);
@@ -170,7 +180,7 @@ export async function searchAmazonTr(query: string, priceRange?: PriceRange): Pr
   const html = await fetchAmazonWithPaging(
     url,
     (combinedHtml, pageNum) => {
-      const { all, relevant, good } = evaluateProducts(combinedHtml, query, max, priceRange);
+      const { all, relevant, good } = evaluateProducts(combinedHtml, query, max, priceRange, exactMatch);
       console.info(`[Amazon TR] sayfa ${pageNum} → ${all.length} aday, ${relevant.length} eşleşen, ${good.length} ana ürün (hedef=${max})`);
       return good.length >= max;
     },
@@ -182,7 +192,7 @@ export async function searchAmazonTr(query: string, priceRange?: PriceRange): Pr
     throw new Error("Amazon TR arama sayfası yüklenemedi (bot algılandı veya site hatası)");
   }
 
-  const { all, relevant } = evaluateProducts(html, query, max, priceRange);
+  const { all, relevant } = evaluateProducts(html, query, max, priceRange, exactMatch);
   const result = pickBestAmazonProducts(relevant, max);
   console.info(`[Amazon TR] toplam: ${all.length} aday → sorgu eşleşen ${relevant.length} → seçilen ${result.length} (max=${max})`);
   return result;

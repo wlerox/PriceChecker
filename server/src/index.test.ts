@@ -102,3 +102,61 @@ test("/api/search/stream sonunda global en ucuz urun icin notify tetiklenir", as
   }
 });
 
+test("tek adapterda exactMatch togglei filtre davranisini degistirir", async () => {
+  const adapterRows: Product[] = [
+    {
+      store: "Hepsiburada",
+      title: "DFS Bilgisayar Dfs Gaming Bruno Intel I5 14400F-H610M-RTX 5060Ti-32GB DDR5",
+      price: 40999,
+      currency: "TRY",
+      url: "https://example.com/hb-1",
+    },
+    {
+      store: "Hepsiburada",
+      title: "DFS Bilgisayar Dfs Gaming Bruno Intel I5 14400F-H610M-RTX OC 5060Ti-32GB DDR5",
+      price: 39999,
+      currency: "TRY",
+      url: "https://example.com/hb-2",
+    },
+    {
+      store: "Hepsiburada",
+      title: "DFS Bilgisayar Dfs Gaming Bruno Intel I5 14400F-H610M-4060Ti-32GB DDR5",
+      price: 35999,
+      currency: "TRY",
+      url: "https://example.com/hb-3",
+    },
+  ];
+  const app = createApp({
+    createStoreJobsFn: () => [{ name: "Hepsiburada", fn: async () => adapterRows }],
+    notifyBestPriceFn: async () => "sent",
+  });
+
+  const server = app.listen(0);
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("test server address alinamadi");
+    }
+
+    const base = `http://127.0.0.1:${address.port}/api/search`;
+    const inOrderRes = await fetch(`${base}?q=rtx%205060ti`);
+    assert.equal(inOrderRes.status, 200);
+    const inOrderBody = (await inOrderRes.json()) as { results: Product[] };
+    assert.equal(inOrderBody.results.length, 2);
+    assert.equal(inOrderBody.results[0].url, "https://example.com/hb-2");
+
+    const exactRes = await fetch(`${base}?q=rtx%205060ti&exactMatch=1`);
+    assert.equal(exactRes.status, 200);
+    const exactBody = (await exactRes.json()) as { results: Product[] };
+    assert.equal(exactBody.results.length, 1);
+    assert.equal(exactBody.results[0].url, "https://example.com/hb-1");
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+  }
+});
+

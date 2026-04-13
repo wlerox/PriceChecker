@@ -4,6 +4,7 @@ import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
 import { fetchTextCurl } from "../curlFetch.ts";
 import { isFetchForcePlaywright } from "../playwrightFetch.ts";
 import { scrapeCiceksepetiListingPages } from "../playwrightCiceksepeti.ts";
+import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
 import { filterProductsByPriceRange, type PriceRange } from "../priceRange.ts";
 
@@ -62,7 +63,11 @@ async function resolveSuggestPath(query: string): Promise<string | null> {
   return null;
 }
 
-export async function searchCiceksepeti(query: string, priceRange?: PriceRange): Promise<Product[]> {
+export async function searchCiceksepeti(
+  query: string,
+  priceRange?: PriceRange,
+  exactMatch = false,
+): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = query.trim();
   if (!q) return [];
@@ -99,7 +104,10 @@ export async function searchCiceksepeti(query: string, priceRange?: PriceRange):
           currency: "TRY",
           url: r.url,
         }));
-        return takeCheapestProducts(filterProductsByPriceRange(mapped, priceRange), max);
+        let relevant = filterProductsByQuery(query, mapped, undefined, exactMatch);
+        relevant = filterProductsByPriceRange(relevant, priceRange);
+        const fallback = filterProductsByPriceRange(mapped, priceRange);
+        return takeCheapestProducts(relevant.length > 0 ? relevant : fallback, max);
       }
     }
   }
@@ -112,5 +120,8 @@ export async function searchCiceksepeti(query: string, priceRange?: PriceRange):
     currency: "TRY",
     url: r.url,
   }));
-  return takeCheapestProducts(filterProductsByPriceRange(mapped, priceRange), max);
+  let relevant = filterProductsByQuery(query, mapped, undefined, exactMatch);
+  relevant = filterProductsByPriceRange(relevant, priceRange);
+  const fallback = filterProductsByPriceRange(mapped, priceRange);
+  return takeCheapestProducts(relevant.length > 0 ? relevant : fallback, max);
 }

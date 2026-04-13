@@ -76,6 +76,26 @@ test("tüm mağazalarda eşleşmeyen satır elenir", () => {
   assert.ok(out[0].title.includes("S24"));
 });
 
+test("varsayılan modda tokenlar sıralı ve aralıklı eşleşir", () => {
+  const out = filterProductsByQuery("rtx 5060ti", [
+    p("DFS Gaming Bruno RTX 5060Ti 32GB DDR5"),
+    p("DFS Gaming Bruno 5060Ti RTX 32GB DDR5"),
+    p("DFS Gaming Bruno RTX 4060Ti"),
+  ]);
+  assert.equal(out.length, 1);
+  assert.ok(out[0].title.includes("RTX 5060Ti"));
+});
+
+test("tam eşleşme modunda bitişik ifade zorunludur", () => {
+  const rows = [
+    p("DFS Gaming Bruno RTX 5060Ti 32GB DDR5"),
+    p("DFS Gaming Bruno RTX OC Edition 5060Ti 32GB DDR5"),
+  ];
+  const out = filterProductsByQuery("rtx 5060ti", rows, undefined, true);
+  assert.equal(out.length, 1);
+  assert.ok(out[0].title.includes("RTX 5060Ti"));
+});
+
 test("dizüstü alt kategorisinde aksesuar satırları elenir", () => {
   const rows = [
     p("Logitech Kablosuz Mouse"),
@@ -122,15 +142,15 @@ test("dizüstü: kablosuz laptop elenmez", () => {
   assert.equal(out.length, 1);
 });
 
-test("4+ kelimeli sorguda bir eksik kelimeye tolerans", () => {
+test("sıralı eşleşmede token sırası korunur", () => {
   const out = filterProductsByQuery("asus rog zephyrus g16", [
-    p("ASUS ROG Zephyrus Notebook 16GB"),
     p("Tam Uyumlu Asus ROG Zephyrus G16 2024"),
+    p("Asus G16 ROG Zephyrus 2024"),
   ]);
-  assert.equal(out.length, 2);
+  assert.equal(out.length, 1);
 });
 
-test("4+ kelimeli sorguda iki eksik kelime elenir", () => {
-  const out = filterProductsByQuery("asus rog zephyrus g16", [p("ASUS ROG Laptop")]);
+test("sıralı eşleşmede eksik token elenir", () => {
+  const out = filterProductsByQuery("asus rog zephyrus g16", [p("ASUS ROG Zephyrus Laptop")]);
   assert.equal(out.length, 0);
 });

@@ -25,6 +25,13 @@ function parseStoresQuery(raw: string | string[] | undefined): string[] | undefi
   return names.length ? names : undefined;
 }
 
+function parseExactMatchQuery(raw: string | string[] | undefined): boolean {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (value == null) return false;
+  const s = String(value).trim().toLocaleLowerCase("tr");
+  return s === "1" || s === "true" || s === "yes" || s === "on";
+}
+
 const PORT = Number(process.env.PORT) || 3001;
 
 const extraCorsOrigins = (process.env.CORS_ORIGINS ?? "")
@@ -51,6 +58,7 @@ type SearchDeps = {
     searchType?: string,
     onlyStores?: string[],
     priceRange?: { min?: number; max?: number },
+    exactMatch?: boolean,
   ) => StoreJob[];
   notifyBestPriceFn?: typeof sendBestPriceTelegramMessage;
 };
@@ -98,6 +106,7 @@ export function createApp(deps: SearchDeps = {}) {
     }
     const searchTypeRaw = typeof req.query.type === "string" ? req.query.type.trim() : "";
     const searchType = searchTypeRaw.length > 0 ? searchTypeRaw : undefined;
+    const exactMatch = parseExactMatchQuery(req.query.exactMatch as string | string[] | undefined);
     const onlyStores = parseStoresQuery(req.query.stores as string | string[] | undefined);
     const priceRangeResult = parsePriceRangeFromQuery(
       typeof req.query.priceMin === "string" ? req.query.priceMin : undefined,
@@ -108,7 +117,7 @@ export function createApp(deps: SearchDeps = {}) {
       return;
     }
     const priceRange = priceRangeResult.range;
-    const jobs = createStoreJobsFn(q, searchType, onlyStores, priceRange);
+    const jobs = createStoreJobsFn(q, searchType, onlyStores, priceRange, exactMatch);
     if (jobs.length === 0) {
       res.status(400).json({ error: "En az bir geçerli mağaza seçin (stores parametresi)." });
       return;
@@ -131,7 +140,7 @@ export function createApp(deps: SearchDeps = {}) {
         }
       });
 
-      let relevant = applyRelevanceFilters(q, searchType, results);
+      let relevant = applyRelevanceFilters(q, searchType, results, exactMatch);
       relevant = filterProductsByPriceRange(relevant, priceRange);
       relevant = sortProductsByPriceAsc(relevant);
 
@@ -171,6 +180,7 @@ export function createApp(deps: SearchDeps = {}) {
     }
     const searchTypeRaw = typeof req.query.type === "string" ? req.query.type.trim() : "";
     const searchType = searchTypeRaw.length > 0 ? searchTypeRaw : undefined;
+    const exactMatch = parseExactMatchQuery(req.query.exactMatch as string | string[] | undefined);
     const onlyStores = parseStoresQuery(req.query.stores as string | string[] | undefined);
     const priceRangeResult = parsePriceRangeFromQuery(
       typeof req.query.priceMin === "string" ? req.query.priceMin : undefined,
@@ -183,13 +193,13 @@ export function createApp(deps: SearchDeps = {}) {
     const priceRange = priceRangeResult.range;
 
     try {
-      const jobs = createStoreJobsFn(q, searchType, onlyStores, priceRange);
+      const jobs = createStoreJobsFn(q, searchType, onlyStores, priceRange, exactMatch);
       if (jobs.length === 0) {
         res.status(400).json({ error: "En az bir geçerli mağaza seçin (stores parametresi)." });
         return;
       }
       const summary = await runWithRelevanceLoggingAsync(jobs.length === 1, () =>
-        writeSearchNdjsonStream(res, q, searchType, jobs, priceRange),
+        writeSearchNdjsonStream(res, q, searchType, jobs, priceRange, exactMatch),
       );
       if (summary.relevantProducts.length > 0) {
         const allSorted = sortProductsByPriceAsc(summary.relevantProducts);

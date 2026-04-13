@@ -107,7 +107,12 @@ function buildListUrl(keywordPath: string, categorySeg: string | undefined): str
 /**
  * @param typeHint — İstemciden `type` (örn. "Ekran kartı"); Vatan kategori URL’sine çevrilir.
  */
-export async function searchVatan(query: string, typeHint?: string, priceRange?: PriceRange): Promise<Product[]> {
+export async function searchVatan(
+  query: string,
+  typeHint?: string,
+  priceRange?: PriceRange,
+  exactMatch = false,
+): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const slugs = slugCandidates(query);
   if (!slugs.length) return [];
@@ -154,7 +159,7 @@ export async function searchVatan(query: string, typeHint?: string, priceRange?:
         }
       }
       const parsed = parseVatanHtml(html, PARSE_LIST_LIMIT);
-      let relevant = filterProductsByQuery(query, parsed);
+      let relevant = filterProductsByQuery(query, parsed, undefined, exactMatch);
       relevant = filterProductsByPriceRange(relevant, priceRange);
       if (relevant.length > 0) return takeCheapestProducts(relevant, max);
     }

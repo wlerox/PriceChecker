@@ -41,20 +41,21 @@ export function createStoreJobs(
   searchType?: string,
   onlyStores?: string[],
   priceRange?: PriceRange,
+  exactMatch = false,
 ): StoreJob[] {
   const all: StoreJob[] = [
-    { name: "Trendyol", fn: () => searchTrendyol(q, priceRange) },
-    { name: "Hepsiburada", fn: () => searchHepsiburada(q, priceRange) },
-    { name: "Amazon TR", fn: () => searchAmazonTr(q, priceRange) },
-    { name: "N11", fn: () => searchN11(q, priceRange) },
-    { name: "Pazarama", fn: () => searchPazarama(q, priceRange) },
-    { name: "İdefix", fn: () => searchIdefix(q, priceRange) },
-    { name: "Vatan", fn: () => searchVatan(q, searchType, priceRange) },
-    { name: "PTT Avm", fn: () => searchPttAvm(q, priceRange) },
-    { name: "MediaMarkt", fn: () => searchMediaMarkt(q, priceRange) },
-    { name: "Çiçeksepeti", fn: () => searchCiceksepeti(q, priceRange) },
-    { name: "Teknosa", fn: () => searchTeknosa(q, priceRange) },
-    { name: "Koçtaş", fn: () => searchKoctas(q, priceRange) },
+    { name: "Trendyol", fn: () => searchTrendyol(q, priceRange, exactMatch) },
+    { name: "Hepsiburada", fn: () => searchHepsiburada(q, priceRange, exactMatch) },
+    { name: "Amazon TR", fn: () => searchAmazonTr(q, priceRange, exactMatch) },
+    { name: "N11", fn: () => searchN11(q, priceRange, exactMatch) },
+    { name: "Pazarama", fn: () => searchPazarama(q, priceRange, exactMatch) },
+    { name: "İdefix", fn: () => searchIdefix(q, priceRange, exactMatch) },
+    { name: "Vatan", fn: () => searchVatan(q, searchType, priceRange, exactMatch) },
+    { name: "PTT Avm", fn: () => searchPttAvm(q, priceRange, exactMatch) },
+    { name: "MediaMarkt", fn: () => searchMediaMarkt(q, priceRange, exactMatch) },
+    { name: "Çiçeksepeti", fn: () => searchCiceksepeti(q, priceRange, exactMatch) },
+    { name: "Teknosa", fn: () => searchTeknosa(q, priceRange, exactMatch) },
+    { name: "Koçtaş", fn: () => searchKoctas(q, priceRange, exactMatch) },
   ];
 
   if (!onlyStores?.length) return all;

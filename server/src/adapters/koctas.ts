@@ -90,7 +90,11 @@ function parseFromCards(html: string, max: number): Product[] {
   return out;
 }
 
-export async function searchKoctas(query: string, priceRange?: PriceRange): Promise<Product[]> {
+export async function searchKoctas(
+  query: string,
+  priceRange?: PriceRange,
+  exactMatch = false,
+): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
   const url = `${BASE}/search?q=${q}&sort=price-asc`;
@@ -128,7 +132,7 @@ export async function searchKoctas(query: string, priceRange?: PriceRange): Prom
     }
   }
 
-  let relevant = filterProductsByQuery(query, merged);
+  let relevant = filterProductsByQuery(query, merged, undefined, exactMatch);
   relevant = filterProductsByPriceRange(relevant, priceRange);
   const fallback = filterProductsByPriceRange(merged, priceRange);
   return takeCheapestProducts(relevant.length > 0 ? relevant : fallback, max);

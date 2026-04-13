@@ -125,7 +125,11 @@ function parseTeknosaHtml(html: string): Product[] {
   return merged;
 }
 
-export async function searchTeknosa(query: string, priceRange?: PriceRange): Promise<Product[]> {
+export async function searchTeknosa(
+  query: string,
+  priceRange?: PriceRange,
+  exactMatch = false,
+): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const budget = budgetMs();
   const t0 = Date.now();
@@ -180,7 +184,7 @@ export async function searchTeknosa(query: string, priceRange?: PriceRange): Pro
         break;
       }
 
-      const relevant = filterProductsByQuery(query, allProducts, pageMap);
+      const relevant = filterProductsByQuery(query, allProducts, pageMap, exactMatch);
       if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) {
         const cheapestRelevantPrice = cheapestProductPrice(relevant);
         if (cheapestRelevantPrice != null && priceRange?.max != null) {
@@ -206,7 +210,7 @@ export async function searchTeknosa(query: string, priceRange?: PriceRange): Pro
     }
   }
 
-  let relevant = filterProductsByQuery(query, allProducts, pageMap);
+  let relevant = filterProductsByQuery(query, allProducts, pageMap, exactMatch);
   relevant = filterProductsByPriceRange(relevant, priceRange);
   const result = takeCheapestProducts(relevant, max);
 

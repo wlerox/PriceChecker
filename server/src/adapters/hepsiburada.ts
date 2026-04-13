@@ -141,7 +141,11 @@ function hbMaxSearchPages(): number {
   return 10;
 }
 
-export async function searchHepsiburada(query: string, priceRange?: PriceRange): Promise<Product[]> {
+export async function searchHepsiburada(
+  query: string,
+  priceRange?: PriceRange,
+  exactMatch = false,
+): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const parseLimit = 100;
   const maxPages = hbMaxSearchPages();
@@ -179,7 +183,7 @@ export async function searchHepsiburada(query: string, priceRange?: PriceRange):
       // Hepsiburada sonuçları artan fiyata göre geldiği için:
       // o ana kadarki en ucuz ilgili ürün bile üst limiti aştıysa,
       // sonraki sayfalarda aralığa düşen ürün beklenmez.
-      const relevantSoFar = filterProductsByQuery(query, merged);
+      const relevantSoFar = filterProductsByQuery(query, merged, undefined, exactMatch);
       if (shouldStopByCheapestRelevantAboveMax(relevantSoFar, priceRange)) break;
 
       const relevant = relevantSoFar;
@@ -195,7 +199,7 @@ export async function searchHepsiburada(query: string, priceRange?: PriceRange):
     }
   }
 
-  let relevant = filterProductsByQuery(query, merged);
+  let relevant = filterProductsByQuery(query, merged, undefined, exactMatch);
   relevant = filterProductsByPriceRange(relevant, priceRange);
   return takeCheapestProducts(relevant, max);
 }

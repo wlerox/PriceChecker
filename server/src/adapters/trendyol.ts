@@ -229,7 +229,11 @@ function collectProductsFromJson(value: unknown, depth: number, out: Product[], 
  * Tek Playwright oturumu: her `pi` sayfası için HTML parse.
  * Sayfa sınırı yok; `STREAM_PER_STORE_TIMEOUT_MS` (varsayılan 90s) dolana kadar devam eder.
  */
-export async function searchTrendyol(query: string, priceRange?: PriceRange): Promise<Product[]> {
+export async function searchTrendyol(
+  query: string,
+  priceRange?: PriceRange,
+  exactMatch = false,
+): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim().toLocaleLowerCase("tr"));
   const byUrl = new Map<string, Product>();
@@ -275,7 +279,7 @@ export async function searchTrendyol(query: string, priceRange?: PriceRange): Pr
 
       if (batch.length === 0) break;
 
-      const relevant = filterProductsByQuery(query, [...byUrl.values()]);
+      const relevant = filterProductsByQuery(query, [...byUrl.values()], undefined, exactMatch);
       if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;
       const inRange = filterProductsByPriceRange(relevant, priceRange);
       if (inRange.length >= max) break;
@@ -288,7 +292,7 @@ export async function searchTrendyol(query: string, priceRange?: PriceRange): Pr
   }
 
   const out = [...byUrl.values()];
-  let relevant = filterProductsByQuery(query, out);
+  let relevant = filterProductsByQuery(query, out, undefined, exactMatch);
   relevant = filterProductsByPriceRange(relevant, priceRange);
   relevant.sort((a, b) => a.price - b.price);
   return relevant.slice(0, max);

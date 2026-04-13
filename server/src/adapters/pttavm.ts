@@ -3,6 +3,7 @@ import type { Product } from "../../../shared/types.ts";
 import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
 import { fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
+import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
 import { filterProductsByPriceRange, type PriceRange } from "../priceRange.ts";
 
@@ -92,7 +93,11 @@ function productsFromCards(html: string, max: number): Product[] {
   return out;
 }
 
-export async function searchPttAvm(query: string, priceRange?: PriceRange): Promise<Product[]> {
+export async function searchPttAvm(
+  query: string,
+  priceRange?: PriceRange,
+  exactMatch = false,
+): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
   const url = `${BASE}/arama?order=price_asc&q=${q}`;
@@ -109,7 +114,10 @@ export async function searchPttAvm(query: string, priceRange?: PriceRange): Prom
     out = productsFromCards(html, max);
   }
 
-  return takeCheapestProducts(filterProductsByPriceRange(dedupeByUrl(out), priceRange), max);
+  let relevant = filterProductsByQuery(query, dedupeByUrl(out), undefined, exactMatch);
+  relevant = filterProductsByPriceRange(relevant, priceRange);
+  const fallback = filterProductsByPriceRange(dedupeByUrl(out), priceRange);
+  return takeCheapestProducts(relevant.length > 0 ? relevant : fallback, max);
 }
 
 function dedupeByUrl(items: Product[]): Product[] {
