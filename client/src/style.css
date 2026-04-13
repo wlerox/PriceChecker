@@ -117,8 +117,10 @@ body {
 }
 
 .search-exact-row {
+  order: -1;
+  width: 100%;
   flex-shrink: 0;
-  padding: 0.55rem 0.2rem;
+  padding: 0.1rem 0.2rem 0.35rem;
   font-size: 0.86rem;
 }
 
