@@ -30,7 +30,7 @@ export async function writeSearchNdjsonStream(
   searchType: string | undefined,
   jobs: StoreJob[],
   priceRange?: PriceRange,
-): Promise<void> {
+): Promise<StreamSearchSummary> {
   res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("X-Accel-Buffering", "no");
@@ -50,14 +50,14 @@ export async function writeSearchNdjsonStream(
         (reason: unknown) => ({
           ok: false as const,
           message: reason instanceof Error ? reason.message : String(reason),
-        })
-      )
+        }),
+      ),
     );
   }
 
   while (pending.size > 0) {
     const winner = await Promise.race(
-      [...pending.entries()].map(([name, p]) => p.then((v) => ({ name, v })))
+      [...pending.entries()].map(([name, p]) => p.then((v) => ({ name, v }))),
     );
     pending.delete(winner.name);
 
