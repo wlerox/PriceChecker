@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
-import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
-import { fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
+import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchConfig.ts";
+import { createFetchSession, fetchTextCurlThenPlaywright, type FetchSession } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
@@ -16,16 +16,6 @@ const BASE = "https://www.pttavm.com";
 
 /** Ardışık boş sayfa toleransı: site geçici olarak boş HTML dönerse pes etmeden birkaç deneme. */
 const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
-
-/** `streamSearch` ile aynı ortam değişkeni ve varsayılan: sayfa döngüsü bu süre dolunca durur. */
-function pttavmBudgetMs(): number {
-  const raw = process.env.STREAM_PER_STORE_TIMEOUT_MS?.trim();
-  if (raw && raw !== "") {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) return Math.floor(n);
-  }
-  return 90_000;
-}
 
 function productsFromJsonLd($: cheerio.CheerioAPI): Product[] {
   const out: Product[] = [];
@@ -116,7 +106,7 @@ function dedupeByUrl(items: Product[]): Product[] {
   });
 }
 
-async function fetchPttAvmPage(q: string, page: number): Promise<string> {
+async function fetchPttAvmPage(q: string, page: number, session: FetchSession): Promise<string> {
   const params = page > 1 ? `&sayfa=${page}` : "";
   const url = `${BASE}/arama?order=price_asc&q=${q}${params}`;
   return fetchTextCurlThenPlaywright(
@@ -127,7 +117,8 @@ async function fetchPttAvmPage(q: string, page: number): Promise<string> {
       waitForAnySelectors: ['a[href*="-p-"]', 'script[type="application/ld+json"]'],
       postLoadWaitMs: 600,
     },
-    "PTT Avm"
+    "PTT Avm",
+    { session }
   );
 }
 
@@ -147,16 +138,17 @@ export async function searchPttAvm(
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
   const merged: Product[] = [];
-  const budgetMs = pttavmBudgetMs();
+  const budgetMs = getPerStoreTimeoutMs();
   const t0 = Date.now();
 
   let pg = 0;
   let consecutiveEmpty = 0;
+  const session = createFetchSession();
   while (true) {
     if (Date.now() - t0 >= budgetMs) break;
     pg += 1;
 
-    const html = await fetchPttAvmPage(q, pg);
+    const html = await fetchPttAvmPage(q, pg, session);
     const batch = parsePage(html);
 
     if (batch.length === 0) {

@@ -9,6 +9,7 @@
     "playwrightUseChrome": "true: yalnızca Chrome dene; false: Chrome’u atlama listesine al; null: varsayılan sıra. Ortam: PLAYWRIGHT_USE_CHROME önceliklidir.",
     "playwrightUseEdge": "false: Edge’i atlama listesine al; null: varsayılan. Ortam: PLAYWRIGHT_USE_EDGE önceliklidir.",
     "maxProductsPerStore": "Her mağaza için en fazla kaç ürün adayı (sorgu ile eşleşenler arasından fiyata göre en ucuz N). 1 yapınca ilgili mağaza araması yeterli aday bulunca mümkün olan yerlerde erken biter. Ortam: FETCH_MAX_PRODUCTS_PER_STORE (öncelikli).",
+    "perStoreTimeoutMs": "Bir mağaza için toplam sayfalama/arama bütçesi (ms). Tüm adapter'lar aynı süreye tabi; bu süre dolunca arama erken biter. Alt sınır 5000, üst sınır 600000. Ortam: STREAM_PER_STORE_TIMEOUT_MS (öncelikli).",
     "telegram": "Telegram bildirimleri için geçici konfig alanı. Not: mevcut kodda aktif kullanım env üzerinden (TELEGRAM_*)."
   },
   "forcePlaywright": false,
@@ -19,6 +20,7 @@
   "playwrightUseChrome": null,
   "playwrightUseEdge": null,
   "maxProductsPerStore": 1,
+  "perStoreTimeoutMs": 90000,
   "telegram": {
     "enabled": false,
     "botToken": "8101161426:AAG1gV3alT08TvLg1HKXW9Wn3w1TC-mmilI",

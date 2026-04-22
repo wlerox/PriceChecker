@@ -19,6 +19,12 @@ export type FetchConfigFile = {
    * Ortam: FETCH_MAX_PRODUCTS_PER_STORE (sayı; öncelikli).
    */
   maxProductsPerStore?: number;
+  /**
+   * Bir mağaza için toplam sayfalama/arama bütçesi (ms).
+   * Tüm adapter'lar aynı bütçeye tabidir; bu süre dolunca arama durur.
+   * Ortam: STREAM_PER_STORE_TIMEOUT_MS (sayı; öncelikli).
+   */
+  perStoreTimeoutMs?: number;
   telegram?: {
     enabled?: boolean;
     botToken?: string;
@@ -37,6 +43,7 @@ export type ResolvedFetchConfig = {
   playwrightUseChrome: boolean | null;
   playwrightUseEdge: boolean | null;
   maxProductsPerStore: number;
+  perStoreTimeoutMs: number;
   telegram: {
     enabled: boolean;
     botToken: string;
@@ -55,6 +62,7 @@ const DEFAULTS: ResolvedFetchConfig = {
   playwrightUseChrome: null,
   playwrightUseEdge: null,
   maxProductsPerStore: 15,
+  perStoreTimeoutMs: 90_000,
   telegram: {
     enabled: false,
     botToken: "",
@@ -93,6 +101,15 @@ function clampMaxProductsPerStore(n: unknown): number {
   const x = Math.floor(n);
   if (x < 1) return 1;
   if (x > 500) return 500;
+  return x;
+}
+
+function clampPerStoreTimeoutMs(n: unknown): number {
+  const d = DEFAULTS.perStoreTimeoutMs;
+  if (typeof n !== "number" || !Number.isFinite(n)) return d;
+  const x = Math.floor(n);
+  if (x < 5_000) return 5_000;
+  if (x > 600_000) return 600_000;
   return x;
 }
 
@@ -136,6 +153,7 @@ function mergeFromFile(base: ResolvedFetchConfig): ResolvedFetchConfig {
   if (file.playwrightUseChrome !== undefined) out.playwrightUseChrome = file.playwrightUseChrome;
   if (file.playwrightUseEdge !== undefined) out.playwrightUseEdge = file.playwrightUseEdge;
   if (file.maxProductsPerStore !== undefined) out.maxProductsPerStore = clampMaxProductsPerStore(file.maxProductsPerStore);
+  if (file.perStoreTimeoutMs !== undefined) out.perStoreTimeoutMs = clampPerStoreTimeoutMs(file.perStoreTimeoutMs);
   if (file.telegram) {
     if (typeof file.telegram.enabled === "boolean") out.telegram.enabled = file.telegram.enabled;
     if (typeof file.telegram.botToken === "string") out.telegram.botToken = file.telegram.botToken;
@@ -164,6 +182,14 @@ function parseMaxProductsPerStoreEnv(): number | undefined {
   return clampMaxProductsPerStore(n);
 }
 
+function parsePerStoreTimeoutMsEnv(): number | undefined {
+  const raw = process.env.STREAM_PER_STORE_TIMEOUT_MS?.trim();
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return undefined;
+  return clampPerStoreTimeoutMs(n);
+}
+
 function applyEnvOverrides(c: ResolvedFetchConfig): ResolvedFetchConfig {
   const out = { ...c };
 
@@ -176,6 +202,9 @@ function applyEnvOverrides(c: ResolvedFetchConfig): ResolvedFetchConfig {
 
   const maxP = parseMaxProductsPerStoreEnv();
   if (maxP !== undefined) out.maxProductsPerStore = maxP;
+
+  const pst = parsePerStoreTimeoutMsEnv();
+  if (pst !== undefined) out.perStoreTimeoutMs = pst;
 
   return out;
 }
@@ -211,4 +240,13 @@ export function isFetchCurlVerboseLog(): boolean {
 /** Mağaza başına döndürülecek en ucuz ürün sayısı üst sınırı (1–500). */
 export function getMaxProductsPerStore(): number {
   return getFetchConfig().maxProductsPerStore;
+}
+
+/**
+ * Bir mağaza için toplam sayfalama/arama bütçesi (ms).
+ * Tüm adapter'lar aynı süreye tabidir; bu süre dolduğunda arama erken biter.
+ * Ortam: STREAM_PER_STORE_TIMEOUT_MS (öncelikli), yoksa `config/fetch.json`.
+ */
+export function getPerStoreTimeoutMs(): number {
+  return getFetchConfig().perStoreTimeoutMs;
 }

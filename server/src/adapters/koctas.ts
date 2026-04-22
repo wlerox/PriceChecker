@@ -1,15 +1,24 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
-import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
-import { fetchTextCurl } from "../curlFetch.ts";
-import { isFetchForcePlaywright } from "../playwrightFetch.ts";
-import { fetchKoctasSearchHtmlWithPlaywright } from "../playwrightKoctas.ts";
+import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchConfig.ts";
+import { createFetchSession, fetchTextCurlThenPlaywright, type FetchSession } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
-import { filterProductsByPriceRange, type PriceRange } from "../priceRange.ts";
+import {
+  filterProductsByPriceRange,
+  pageHasOnlyAboveMax,
+  shouldStopByCheapestRelevantAboveMax,
+  type PriceRange,
+} from "../priceRange.ts";
 
 const BASE = "https://www.koctas.com.tr";
+
+/** Sayfa başına tek seferde çıkarılacak kart için üst sınır (emniyet). */
+const PER_PAGE_CAP = 60;
+
+/** Ardışık boş sayfa toleransı: geçici olarak boş dönen sayfada hemen pes edilmesin. */
+const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
 
 function isBlockedPage(html: string): boolean {
   return /Access Denied|AkamaiGHost|errors\.edgesuite\.net/i.test(html);
@@ -90,40 +99,41 @@ function parseFromCards(html: string, max: number): Product[] {
   return out;
 }
 
-export async function searchKoctas(
-  query: string,
-  priceRange?: PriceRange,
-  exactMatch = false,
-  onlyNew = false,
-): Promise<Product[]> {
-  const max = getMaxProductsPerStore();
+function buildPageUrl(query: string, page: number): string {
   const q = encodeURIComponent(query.trim());
-  const url = `${BASE}/search?q=${q}&sort=price-asc`;
-  const curlOpts = { referer: `${BASE}/`, origin: BASE, useHttp11: true as const, timeoutSec: 20 };
+  return page <= 1
+    ? `${BASE}/search?q=${q}&sort=price-asc`
+    : `${BASE}/search?q=${q}&sort=price-asc&page=${page}`;
+}
 
-  let html = "";
-
-  if (!isFetchForcePlaywright()) {
-    try {
-      html = await fetchTextCurl(url, curlOpts);
-    } catch (e) {
-      console.warn(`[fetch:Koçtaş] curl failed → playwright | ${(e as Error).message}`);
-    }
-  }
-
-  if (!html || html.length <= 20 || isBlockedPage(html)) {
-    const reason = isBlockedPage(html) ? "WAF block" : "empty/short";
-    console.info(`[fetch:Koçtaş] curl ${reason} → playwright fallback`);
-    html = await fetchKoctasSearchHtmlWithPlaywright(url);
-  }
+async function fetchKoctasPage(url: string, session: FetchSession): Promise<string> {
+  const html = await fetchTextCurlThenPlaywright(
+    url,
+    { referer: `${BASE}/`, origin: BASE, useHttp11: true, timeoutSec: 20 },
+    {
+      referer: `${BASE}/`,
+      waitForAnySelectors: ['a[href*="/p/"]', 'script[type="application/ld+json"]'],
+      postLoadWaitMs: 300,
+      lazyScrollRounds: 2,
+    },
+    "Koçtaş",
+    {
+      shouldFallbackToPlaywright: isBlockedPage,
+      shouldFallbackToHeadedBrowser: isBlockedPage,
+      session,
+    },
+  );
 
   if (isBlockedPage(html)) {
     throw new Error("Koçtaş bu ağdan isteği engelledi (Access Denied / WAF).");
   }
 
-  const fromJsonLd = parseFromJsonLd(html, max * 3);
-  const fromCards = parseFromCards(html, max * 3);
+  return html;
+}
 
+function parsePage(html: string): Product[] {
+  const fromJsonLd = parseFromJsonLd(html, PER_PAGE_CAP);
+  const fromCards = parseFromCards(html, PER_PAGE_CAP);
   const seen = new Set(fromJsonLd.map((p) => p.url));
   const merged = [...fromJsonLd];
   for (const c of fromCards) {
@@ -132,9 +142,63 @@ export async function searchKoctas(
       merged.push(c);
     }
   }
+  return merged;
+}
+
+export async function searchKoctas(
+  query: string,
+  priceRange?: PriceRange,
+  exactMatch = false,
+  onlyNew = false,
+): Promise<Product[]> {
+  const max = getMaxProductsPerStore();
+  const budgetMs = getPerStoreTimeoutMs();
+  const t0 = Date.now();
+
+  const merged: Product[] = [];
+  const seen = new Set<string>();
+  let consecutiveEmpty = 0;
+  const session = createFetchSession();
+
+  for (let pg = 1; ; pg++) {
+    if (Date.now() - t0 >= budgetMs) break;
+
+    const url = buildPageUrl(query, pg);
+    let page: Product[] = [];
+    try {
+      const html = await fetchKoctasPage(url, session);
+      page = parsePage(html);
+    } catch (e) {
+      if (pg === 1) throw e;
+      break;
+    }
+
+    let newUrls = 0;
+    for (const p of page) {
+      if (seen.has(p.url)) continue;
+      seen.add(p.url);
+      merged.push(p);
+      newUrls += 1;
+    }
+
+    if (page.length === 0 || newUrls === 0) {
+      consecutiveEmpty += 1;
+      const relevantSoFar = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
+      const inRangeSoFar = filterProductsByPriceRange(relevantSoFar, priceRange);
+      if (inRangeSoFar.length >= max) break;
+      if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
+      continue;
+    }
+    consecutiveEmpty = 0;
+
+    const relevantSoFar = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
+    if (shouldStopByCheapestRelevantAboveMax(relevantSoFar, priceRange)) break;
+    const inRange = filterProductsByPriceRange(relevantSoFar, priceRange);
+    if (inRange.length >= max) break;
+    if (pageHasOnlyAboveMax(page, priceRange)) break;
+  }
 
   let relevant = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
-  const fallback = filterProductsByPriceRange(merged, priceRange);
-  return takeCheapestProducts(relevant.length > 0 ? relevant : fallback, max);
+  return takeCheapestProducts(relevant, max);
 }

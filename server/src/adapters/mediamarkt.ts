@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import type { Element } from "domhandler";
 import type { Product } from "../../../shared/types.ts";
-import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
+import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchConfig.ts";
 import { fetchMediaMarktSearchHtmlWithPlaywright } from "../playwrightMediaMarkt.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
@@ -14,6 +14,9 @@ import {
 } from "../priceRange.ts";
 
 const BASE = "https://www.mediamarkt.com.tr";
+
+/** Ardışık boş sayfa toleransı: geçici olarak boş dönen sayfada hemen pes edilmesin. */
+const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
 
 function normalizeMmUrl(href: string): string | null {
   const h = href.trim();
@@ -117,14 +120,11 @@ function parseMediaMarktHtml(html: string): Product[] {
   return out;
 }
 
-function mmMaxSearchPages(): number {
-  const raw = process.env.MEDIAMARKT_MAX_PAGES?.trim();
-  if (raw) {
-    const n = parseInt(raw, 10);
-    if (Number.isFinite(n) && n >= 1 && n <= 50) return n;
-  }
-  return 10;
-}
+/**
+ * Runaway emniyeti: bütçe dolana kadar sayfalamaya devam edilir; yine de sonsuz döngüyü
+ * olası bir pagination-hatası nedeniyle engellemek için çok geniş bir tavan.
+ */
+const HARD_PAGE_SAFETY_CAP = 500;
 
 /**
  * Playwright ile arama sayfası yüklenir (sonuçlar istemci tarafında).
@@ -141,43 +141,104 @@ export async function searchMediaMarkt(
   const max = getMaxProductsPerStore();
   const minCardsOnPage = Math.max(20, max * 5);
   const q = encodeURIComponent(query.trim());
-  const maxPages = mmMaxSearchPages();
   const merged: Product[] = [];
   const seen = new Set<string>();
+  const budgetMs = getPerStoreTimeoutMs();
+  const t0 = Date.now();
+  let consecutiveEmpty = 0;
+  let pagesFetched = 0;
+  let lastError: Error | null = null;
+  let timedOut = false;
 
-  try {
-    for (let page = 1; page <= maxPages; page++) {
-      const searchUrl =
-        page <= 1
-          ? `${BASE}/tr/search.html?query=${q}&sort=currentprice+asc`
-          : `${BASE}/tr/search.html?query=${q}&sort=currentprice+asc&page=${page}`;
-
-      const html = await fetchMediaMarktSearchHtmlWithPlaywright(searchUrl, minCardsOnPage);
-      const batch = parseMediaMarktHtml(html);
-
-      let newUrls = 0;
-      for (const p of batch) {
-        if (seen.has(p.url)) continue;
-        seen.add(p.url);
-        merged.push(p);
-        newUrls++;
-      }
-
-      const relevant = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
-      if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;
-      const inRange = filterProductsByPriceRange(relevant, priceRange);
-      if (inRange.length >= max) break;
-      if (pageHasOnlyAboveMax(batch, priceRange)) break;
-
-      if (page > 1 && newUrls === 0) break;
-      if (batch.length === 0) break;
+  for (let page = 1; page <= HARD_PAGE_SAFETY_CAP; page++) {
+    if (Date.now() - t0 >= budgetMs) {
+      console.info(
+        `[fetch:MediaMarkt] bütçe doldu (sayfa=${page - 1}, toplam=${merged.length})`,
+      );
+      timedOut = true;
+      break;
     }
 
-    let relevant = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
-    relevant = filterProductsByPriceRange(relevant, priceRange);
-    return takeCheapestProducts(relevant, max);
-  } catch (e) {
-    console.warn("[MediaMarkt]", e instanceof Error ? e.message : String(e));
-    return [];
+    const searchUrl =
+      page <= 1
+        ? `${BASE}/tr/search.html?query=${q}&sort=currentprice+asc`
+        : `${BASE}/tr/search.html?query=${q}&sort=currentprice+asc&page=${page}`;
+
+    let html: string;
+    try {
+      html = await fetchMediaMarktSearchHtmlWithPlaywright(searchUrl, minCardsOnPage);
+      pagesFetched += 1;
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
+      console.warn(`[fetch:MediaMarkt] sayfa=${page} çekilemedi: ${lastError.message}`);
+      consecutiveEmpty += 1;
+      if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
+      continue;
+    }
+
+    const batch = parseMediaMarktHtml(html);
+
+    let newUrls = 0;
+    for (const p of batch) {
+      if (seen.has(p.url)) continue;
+      seen.add(p.url);
+      merged.push(p);
+      newUrls++;
+    }
+
+    const relevant = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
+    if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;
+    const inRange = filterProductsByPriceRange(relevant, priceRange);
+    if (inRange.length >= max) break;
+    if (batch.length > 0 && pageHasOnlyAboveMax(batch, priceRange)) break;
+
+    if (batch.length === 0 || (page > 1 && newUrls === 0)) {
+      consecutiveEmpty += 1;
+      if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
+      continue;
+    }
+    consecutiveEmpty = 0;
   }
+
+  let relevant = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
+  relevant = filterProductsByPriceRange(relevant, priceRange);
+
+  /**
+   * Kullanıcıya net sinyal ver (Çiçeksepeti/Koçtaş ile aynı UX):
+   *   - 0 sayfa + fetch hatası  → fetch hatası fırlatılır
+   *   - 0 sayfa + bütçe doldu   → "hiçbir sayfa çekilemedi"
+   *   - N sayfa + 0 eşleşme + timeout → "bütçe doldu, eşleşme bulunamadı"
+   *   - N sayfa + 0 eşleşme + doğal bitiş → "eşleşme bulunamadı"
+   *   - ≥1 eşleşme → normal sonuç
+   */
+  if (relevant.length === 0) {
+    const elapsedSec = Math.round((Date.now() - t0) / 1000);
+    const budgetSec = Math.round(budgetMs / 1000);
+    const candidate = merged.length;
+
+    if (pagesFetched === 0) {
+      if (lastError) {
+        throw new Error(`MediaMarkt'a ulaşılamadı: ${lastError.message}`);
+      }
+      if (timedOut) {
+        throw new Error(
+          `MediaMarkt: ${budgetSec} sn arama bütçesi doldu, hiçbir sayfa çekilemedi.`,
+        );
+      }
+      throw new Error("MediaMarkt: hiçbir sayfa çekilemedi.");
+    }
+
+    if (timedOut) {
+      throw new Error(
+        `MediaMarkt: "${query}" için ${budgetSec} sn arama bütçesi doldu, eşleşen ürün bulunamadı ` +
+          `(${pagesFetched} sayfa tarandı, ${candidate} aday ürün elendi, süre=${elapsedSec}s).`,
+      );
+    }
+    throw new Error(
+      `MediaMarkt: "${query}" için eşleşen ürün bulunamadı ` +
+        `(${pagesFetched} sayfa tarandı, ${candidate} aday ürün elendi, süre=${elapsedSec}s).`,
+    );
+  }
+
+  return takeCheapestProducts(relevant, max);
 }

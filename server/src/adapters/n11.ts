@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
-import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
-import { fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
+import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchConfig.ts";
+import { createFetchSession, fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import {
@@ -15,14 +15,8 @@ const BASE = "https://www.n11.com";
 
 const PER_PAGE_CAP = 28;
 
-function n11BudgetMs(): number {
-  const raw = process.env.STREAM_PER_STORE_TIMEOUT_MS?.trim();
-  if (raw && raw !== "") {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) return Math.floor(n);
-  }
-  return 90_000;
-}
+/** Ardışık boş sayfa toleransı: geçici olarak boş dönen sayfada hemen pes edilmesin. */
+const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
 
 function parseProductListFromHtml(html: string): Product[] {
   const $ = cheerio.load(html);
@@ -101,10 +95,12 @@ export async function searchN11(
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
   const merged: Product[] = [];
-  const budgetMs = n11BudgetMs();
+  const budgetMs = getPerStoreTimeoutMs();
   const t0 = Date.now();
 
   let pg = 0;
+  let consecutiveEmpty = 0;
+  const session = createFetchSession();
   while (true) {
     if (Date.now() - t0 >= budgetMs) break;
     pg += 1;
@@ -114,13 +110,20 @@ export async function searchN11(
       url,
       { referer: `${BASE}/` },
       { referer: `${BASE}/`, waitForAnySelectors: ['a.product-item[href*="/urun/"]'], postLoadWaitMs: 600 },
-      "N11"
+      "N11",
+      { session }
     );
     const page = parseProductListFromHtml(html);
-    for (const p of page) {
-      merged.push(p);
+    if (page.length === 0) {
+      consecutiveEmpty += 1;
+      const relevantSoFar = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
+      const inRangeSoFar = filterProductsByPriceRange(relevantSoFar, priceRange);
+      if (inRangeSoFar.length >= max) break;
+      if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
+      continue;
     }
-    if (page.length === 0) break;
+    consecutiveEmpty = 0;
+    for (const p of page) merged.push(p);
 
     const relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
     if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;

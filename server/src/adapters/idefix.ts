@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
-import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
-import { fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
+import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchConfig.ts";
+import { createFetchSession, fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import {
@@ -15,15 +15,6 @@ const BASE = "https://www.idefix.com";
 
 const HB_STYLE_P_ID = /-p-(\d+)(?:[#?]|$)/;
 const PER_PAGE_CAP = 28;
-
-function idefixBudgetMs(): number {
-  const raw = process.env.STREAM_PER_STORE_TIMEOUT_MS?.trim();
-  if (raw && raw !== "") {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) return Math.floor(n);
-  }
-  return 90_000;
-}
 
 function parseProductsFromHtml(html: string): Product[] {
   const $ = cheerio.load(html);
@@ -78,11 +69,12 @@ export async function searchIdefix(
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
   const merged: Product[] = [];
-  const budgetMs = idefixBudgetMs();
+  const budgetMs = getPerStoreTimeoutMs();
   const t0 = Date.now();
 
   let pg = 0;
   let consecutiveEmpty = 0;
+  const session = createFetchSession();
   while (true) {
     if (Date.now() - t0 >= budgetMs) break;
     pg += 1;
@@ -92,7 +84,8 @@ export async function searchIdefix(
       url,
       { referer: `${BASE}/`, origin: BASE, useHttp11: true, timeoutSec: 35 },
       { referer: `${BASE}/`, waitForAnySelectors: ['a[href*="-p-"]'], postLoadWaitMs: 600 },
-      "İdefix"
+      "İdefix",
+      { session }
     );
     const page = parseProductsFromHtml(html);
 

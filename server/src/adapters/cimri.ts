@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
-import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
-import { fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
+import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchConfig.ts";
+import { createFetchSession, fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
@@ -14,6 +14,9 @@ import {
 
 const BASE = "https://www.cimri.com";
 const PER_PAGE_CAP = 42;
+
+/** Ardışık boş sayfa toleransı: geçici olarak boş dönen sayfada hemen pes edilmesin. */
+const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
 
 function isCimriChallengePage(html: string): boolean {
   return (
@@ -29,15 +32,6 @@ function isCimriNonSearchLanding(html: string): boolean {
     !html.includes("fiyatlari") &&
     !html.includes("-fiyati")
   );
-}
-
-function cimriBudgetMs(): number {
-  const raw = process.env.STREAM_PER_STORE_TIMEOUT_MS?.trim();
-  if (raw && raw !== "") {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) return Math.floor(n);
-  }
-  return 90_000;
 }
 
 function normalizeUrl(raw: string): string {
@@ -179,10 +173,12 @@ export async function searchCimri(
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
-  const budgetMs = cimriBudgetMs();
+  const budgetMs = getPerStoreTimeoutMs();
   const t0 = Date.now();
   const merged: Product[] = [];
+  const session = createFetchSession();
 
+  let consecutiveEmpty = 0;
   for (let pg = 1; ; pg++) {
     if (Date.now() - t0 >= budgetMs) break;
 
@@ -200,7 +196,11 @@ export async function searchCimri(
         postLoadWaitMs: 500,
       },
       "Cimri",
-      { shouldFallbackToPlaywright: isCimriChallengePage },
+      {
+        shouldFallbackToPlaywright: isCimriChallengePage,
+        shouldFallbackToHeadedBrowser: isCimriChallengePage,
+        session,
+      },
     );
 
     if (pg === 1 && isCimriChallengePage(html)) {
@@ -210,15 +210,20 @@ export async function searchCimri(
     }
 
     const page = dedupeByUrl([...parseFromJsonLd(html), ...parseFromCards(html)]);
-    if (pg === 1 && page.length === 0) {
-      if (isCimriNonSearchLanding(html)) {
-        throw new Error(
-          "Cimri arama sonuç sayfası bu ağda yüklenemedi; site ana/market sayfasına yönlendiriyor. Farklı bir ağ deneyin.",
-        );
-      }
-      break;
+    if (pg === 1 && page.length === 0 && isCimriNonSearchLanding(html)) {
+      throw new Error(
+        "Cimri arama sonuç sayfası bu ağda yüklenemedi; site ana/market sayfasına yönlendiriyor. Farklı bir ağ deneyin.",
+      );
     }
-    if (page.length === 0) break;
+    if (page.length === 0) {
+      consecutiveEmpty += 1;
+      const relevantSoFar = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
+      const inRangeSoFar = filterProductsByPriceRange(relevantSoFar, priceRange);
+      if (inRangeSoFar.length >= max) break;
+      if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
+      continue;
+    }
+    consecutiveEmpty = 0;
 
     for (const p of page) merged.push(p);
 

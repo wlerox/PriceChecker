@@ -25,12 +25,57 @@ export type FetchTextPlaywrightOptions = {
   /** Çerez-onay diyaloğunu kapatmak için CSS / Playwright selektörleri.
    *  Sayfa yüklendikten sonra ilk görünür buton tıklanır. */
   dismissCookieConsentSelectors?: string[];
+  /**
+   * `true` — başlık/headed (görünür) tarayıcı ile açılır (WAF/CAPTCHA son çare fallback).
+   * `false` — headless (varsayılan: config/ortam).
+   * Belirtilmezse `playwrightHeadless()` kararı kullanılır.
+   */
+  headed?: boolean;
 };
 
 export type FetchTextCurlThenPlaywrightOptions = {
-  /** true dönerse curl yanıtı yetersiz kabul edilir ve Playwright fallback denenir. */
+  /** true dönerse curl yanıtı yetersiz kabul edilir ve headless Playwright fallback denenir. */
   shouldFallbackToPlaywright?: (html: string) => boolean;
+  /**
+   * true dönerse headless Playwright yanıtı hâlâ engelli/yetersiz kabul edilir ve
+   * son çare olarak headed (gerçek pencere) Playwright denenir.
+   * Verilmezse `shouldFallbackToPlaywright` kullanılır (aynı engel kalıbı).
+   */
+  shouldFallbackToHeadedBrowser?: (html: string) => boolean;
+  /**
+   * Sayfalama için "yapışkan" (sticky) katman durumu. Aynı adapter içinde
+   * birden çok sayfa çekilirken bir üst katmana çıkıldığında sonraki
+   * çağrılar başa dönmez, bulunulan katmandan devam eder.
+   * Örn: sayfa 1'de curl bloklandı → headless'a geçildi → sayfa 2'den itibaren
+   * doğrudan headless'la başlanır, curl tekrar denenmez.
+   */
+  session?: FetchSession;
 };
+
+/** 1 = curl, 2 = playwright headless, 3 = playwright headed. Sadece yukarı doğru değişir. */
+export type FetchTier = "curl" | "playwright-headless" | "playwright-headed";
+
+export type FetchSession = {
+  tier: FetchTier;
+};
+
+/** Adapter başına `const session = createFetchSession();` yapıp sayfalama loop'una geçirin. */
+export function createFetchSession(): FetchSession {
+  return { tier: "curl" };
+}
+
+function promoteTier(session: FetchSession | undefined, next: FetchTier, label?: string): void {
+  if (!session) return;
+  const order: Record<FetchTier, number> = {
+    curl: 0,
+    "playwright-headless": 1,
+    "playwright-headed": 2,
+  };
+  if (order[next] > order[session.tier]) {
+    console.warn(`${tag(label)} fetch tier promoted: ${session.tier} → ${next} (sonraki sayfalar bu katmandan başlayacak)`);
+    session.tier = next;
+  }
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -76,7 +121,9 @@ export async function fetchTextPlaywright(url: string, options?: FetchTextPlaywr
   const waitUntil = options?.pageGotoWaitUntil ?? "domcontentloaded";
   const t0 = Date.now();
   const label = options?.logLabel;
-  const browser = await launchChromiumPreferInstalled(playwrightHeadless());
+  const headless =
+    options?.headed === true ? false : options?.headed === false ? true : playwrightHeadless();
+  const browser = await launchChromiumPreferInstalled(headless);
   try {
     const context = await browser.newContext(playwrightFetchContextOptions());
     await addPlaywrightFetchInitScripts(context);
@@ -128,10 +175,12 @@ export async function fetchTextPlaywright(url: string, options?: FetchTextPlaywr
     }
     await context.close();
     const ms = Date.now() - t0;
-    console.info(`${tag(label)} playwright ok | url=${url} | bytes=${html.length} | ${ms}ms`);
+    const mode = headless ? "headless" : "headed";
+    console.info(`${tag(label)} playwright ok (${mode}) | url=${url} | bytes=${html.length} | ${ms}ms`);
     return html;
   } catch (e) {
-    console.error(`${tag(label)} playwright error | url=${url} | ${errMessage(e)}`);
+    const mode = headless ? "headless" : "headed";
+    console.error(`${tag(label)} playwright error (${mode}) | url=${url} | ${errMessage(e)}`);
     throw e;
   } finally {
     await browser.close();
@@ -139,8 +188,13 @@ export async function fetchTextPlaywright(url: string, options?: FetchTextPlaywr
 }
 
 /**
- * Önce curl, hata veya anlamsız/boş yanıtta Playwright.
- * `FETCH_FORCE_PLAYWRIGHT` / `FORCE_BROWSER_FETCH` veya `server/config/fetch.json` → `forcePlaywright` iken curl atlanır.
+ * Kademeli fallback zinciri:
+ *   1) curl  (hata / boş / `shouldFallbackToPlaywright` true → sonraki aşama)
+ *   2) Playwright headless (yüklü Chrome → Edge → paket Chromium)
+ *      (hata / `shouldFallbackToHeadedBrowser` true → sonraki aşama)
+ *   3) Playwright headed (gerçek tarayıcı penceresi; WAF/CAPTCHA son çare)
+ *
+ * `FETCH_FORCE_PLAYWRIGHT` / `FORCE_BROWSER_FETCH` veya `config/fetch.json → forcePlaywright` iken 1. adım atlanır.
  * Fallback satırları `console.warn`; curl başarı detayı için `curlVerboseLog` (dosya) veya `FETCH_HTTP_LOG` / `FETCH_LOG`.
  */
 export async function fetchTextCurlThenPlaywright(
@@ -152,10 +206,45 @@ export async function fetchTextCurlThenPlaywright(
 ): Promise<string> {
   const label = logLabel ?? playwrightOptions?.logLabel;
   const mergedPw: FetchTextPlaywrightOptions = { ...playwrightOptions, logLabel: label };
+  const headedCheck = options?.shouldFallbackToHeadedBrowser ?? options?.shouldFallbackToPlaywright;
+  const session = options?.session;
+
+  /** Gerçek headed (görünür) tarayıcı katmanı. Başarılı/başarısız session'ı kilitler. */
+  async function runHeaded(reason: string): Promise<string> {
+    if (session?.tier !== "playwright-headed") {
+      console.warn(`${tag(label)} ${reason} → headed browser | url=${url}`);
+    }
+    promoteTier(session, "playwright-headed", label);
+    return await fetchTextPlaywright(url, { ...mergedPw, headed: true });
+  }
+
+  /** Headless Playwright katmanı; engel tespit edilirse headed'e yükselir. */
+  async function runHeadless(reason: string): Promise<string> {
+    if (session?.tier !== "playwright-headless" && session?.tier !== "playwright-headed") {
+      console.warn(`${tag(label)} ${reason} → playwright headless | url=${url}`);
+    }
+    promoteTier(session, "playwright-headless", label);
+    try {
+      const html = await fetchTextPlaywright(url, { ...mergedPw, headed: false });
+      if (headedCheck?.(html) === true) {
+        return await runHeaded("playwright headless blocked/challenge");
+      }
+      return html;
+    } catch (e) {
+      return await runHeaded(`playwright headless failed (${errMessage(e)})`);
+    }
+  }
+
+  /** Zaten yükselmiş bir session varsa doğrudan o katmandan başla. */
+  if (session?.tier === "playwright-headed") {
+    return await fetchTextPlaywright(url, { ...mergedPw, headed: true });
+  }
+  if (session?.tier === "playwright-headless") {
+    return await runHeadless("session lock");
+  }
 
   if (isFetchForcePlaywright()) {
-    console.info(`${tag(label)} skip curl → playwright (force browser) | url=${url}`);
-    return await fetchTextPlaywright(url, mergedPw);
+    return await runHeadless("skip curl (force browser)");
   }
 
   const t0 = Date.now();
@@ -163,8 +252,7 @@ export async function fetchTextCurlThenPlaywright(
     const html = await fetchTextCurl(url, curlOptions);
     if (html && html.length > 20) {
       if (options?.shouldFallbackToPlaywright?.(html) === true) {
-        console.warn(`${tag(label)} curl blocked/challenge → playwright | url=${url}`);
-        return await fetchTextPlaywright(url, mergedPw);
+        return await runHeadless("curl blocked/challenge");
       }
       if (curlVerbose()) {
         const ms = Date.now() - t0;
@@ -172,10 +260,8 @@ export async function fetchTextCurlThenPlaywright(
       }
       return html;
     }
-    console.warn(`${tag(label)} curl empty/short → playwright | url=${url}`);
-    return await fetchTextPlaywright(url, mergedPw);
+    return await runHeadless("curl empty/short");
   } catch (e) {
-    console.warn(`${tag(label)} curl failed → playwright | url=${url} | ${errMessage(e)}`);
-    return await fetchTextPlaywright(url, mergedPw);
+    return await runHeadless(`curl failed (${errMessage(e)})`);
   }
 }

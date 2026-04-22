@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
-import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
-import { fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
+import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchConfig.ts";
+import { createFetchSession, fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import {
@@ -15,14 +15,8 @@ const BASE = "https://www.pazarama.com";
 
 const PER_PAGE_CAP = 40;
 
-function pazaramaBudgetMs(): number {
-  const raw = process.env.STREAM_PER_STORE_TIMEOUT_MS?.trim();
-  if (raw && raw !== "") {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) return Math.floor(n);
-  }
-  return 90_000;
-}
+/** Ardışık boş sayfa toleransı: geçici olarak boş dönen sayfada hemen pes edilmesin. */
+const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
 
 function parseProductListFromHtml(html: string): Product[] {
   const $ = cheerio.load(html);
@@ -115,10 +109,12 @@ export async function searchPazarama(
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
   const merged: Product[] = [];
-  const budgetMs = pazaramaBudgetMs();
+  const budgetMs = getPerStoreTimeoutMs();
   const t0 = Date.now();
 
   let pg = 0;
+  let consecutiveEmpty = 0;
+  const session = createFetchSession();
   while (true) {
     if (Date.now() - t0 >= budgetMs) break;
     pg += 1;
@@ -139,12 +135,21 @@ export async function searchPazarama(
         ],
         postLoadWaitMs: 600,
       },
-      "Pazarama"
+      "Pazarama",
+      { session }
     );
 
     const page = parseProductListFromHtml(html);
+    if (page.length === 0) {
+      consecutiveEmpty += 1;
+      const relevantSoFar = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
+      const inRangeSoFar = filterProductsByPriceRange(relevantSoFar, priceRange);
+      if (inRangeSoFar.length >= max) break;
+      if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
+      continue;
+    }
+    consecutiveEmpty = 0;
     for (const p of page) merged.push(p);
-    if (page.length === 0) break;
 
     const relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
     if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;

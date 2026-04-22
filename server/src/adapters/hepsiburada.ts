@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
-import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
+import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchConfig.ts";
 import {
   createHepsiburadaPlaywrightSession,
   type HepsiburadaPlaywrightSession,
@@ -16,6 +16,9 @@ import {
 } from "../priceRange.ts";
 
 const BASE = "https://www.hepsiburada.com";
+
+/** Ardışık boş sayfa toleransı: geçici olarak boş dönen sayfada hemen pes edilmesin. */
+const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
 
 function isHbCaptchaPage(html: string): boolean {
   return (
@@ -132,14 +135,11 @@ function walkJsonForHbProducts(data: unknown, out: Product[], depth: number, max
   }
 }
 
-function hbMaxSearchPages(): number {
-  const raw = process.env.HEPSIBURADA_MAX_PAGES?.trim();
-  if (raw) {
-    const n = parseInt(raw, 10);
-    if (Number.isFinite(n) && n >= 1 && n <= 50) return n;
-  }
-  return 10;
-}
+/**
+ * Runaway emniyeti: bütçe dolana kadar sayfalamaya devam edilir; yine de sonsuz döngüyü
+ * olası bir pagination-hatası nedeniyle engellemek için çok geniş bir tavan.
+ */
+const HARD_PAGE_SAFETY_CAP = 500;
 
 export async function searchHepsiburada(
   query: string,
@@ -149,14 +149,18 @@ export async function searchHepsiburada(
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const parseLimit = 100;
-  const maxPages = hbMaxSearchPages();
   const merged: Product[] = [];
   const seen = new Set<string>();
   const usePlaywright = process.env.HEPSIBURADA_NO_PLAYWRIGHT !== "1";
   const hbSession = usePlaywright ? await createHepsiburadaPlaywrightSession().catch(() => null) : null;
+  const budgetMs = getPerStoreTimeoutMs();
+  const t0 = Date.now();
+  let consecutiveEmpty = 0;
 
   try {
-    for (let page = 1; page <= maxPages; page++) {
+    for (let page = 1; page <= HARD_PAGE_SAFETY_CAP; page++) {
+      if (Date.now() - t0 >= budgetMs) break;
+
       const html = await fetchSearchHtml(query, page, hbSession ?? undefined);
 
       let batch = parseHbListHtml(html, parseLimit);
@@ -191,8 +195,12 @@ export async function searchHepsiburada(
       const inRange = filterProductsByPriceRange(relevant, priceRange);
       if (inRange.length >= max) break;
 
-      if (page > 1 && newUrls === 0) break;
-      if (batch.length === 0) break;
+      if (batch.length === 0 || (page > 1 && newUrls === 0)) {
+        consecutiveEmpty += 1;
+        if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
+        continue;
+      }
+      consecutiveEmpty = 0;
     }
   } finally {
     if (hbSession) {

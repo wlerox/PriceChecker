@@ -161,6 +161,7 @@ const NON_NEW_TITLE_NEEDLES: readonly string[] = [
   "yenilenmiş",
   "yenilenmis",
   "yenilenme",
+  "yenilio",
   "refurbished",
   "teşhir",
   "teshir",

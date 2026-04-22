@@ -1,14 +1,28 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
-import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
+import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchConfig.ts";
 import { fetchTextCurl, fetchTextCurlWithSession } from "../curlFetch.ts";
 import { fetchTextPlaywright, isFetchForcePlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
-import { filterProductsByPriceRange, type PriceRange } from "../priceRange.ts";
+import {
+  filterProductsByPriceRange,
+  pageHasOnlyAboveMax,
+  shouldStopByCheapestRelevantAboveMax,
+  type PriceRange,
+} from "../priceRange.ts";
 
 const BASE = "https://www.vatanbilgisayar.com";
+
+/** Ardışık boş sayfa toleransı: geçici olarak boş dönen sayfada hemen pes edilmesin. */
+const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
+
+/**
+ * Runaway emniyeti: gerçek sınırlayıcı bütçe; yine de sonsuz döngüyü olası bir
+ * pagination-hatası nedeniyle engellemek için çok geniş bir tavan.
+ */
+const HARD_PAGE_SAFETY_CAP = 500;
 
 const curlOpts = {
   referer: `${BASE}/`,
@@ -96,12 +110,42 @@ function parseVatanHtml(html: string, maxRows: number): Product[] {
   return out;
 }
 
-function buildListUrl(keywordPath: string, categorySeg: string | undefined): string {
-  const sort = "srt=UP&stk=true";
+function buildListUrl(keywordPath: string, categorySeg: string | undefined, page: number): string {
   const basePath = categorySeg
     ? `/arama/${keywordPath}/${categorySeg.replace(/^\/|\/$/g, "")}/`
     : `/arama/${keywordPath}/`;
-  return `${BASE}${basePath}?${sort}`;
+  const params = new URLSearchParams();
+  params.set("srt", "UP");
+  params.set("stk", "true");
+  if (page > 1) params.set("PageNo", String(page));
+  return `${BASE}${basePath}?${params.toString()}`;
+}
+
+async function fetchVatanPage(
+  url: string,
+  useSession: boolean,
+): Promise<string> {
+  const vatanPwOpts = {
+    referer: `${BASE}/`,
+    waitForAnySelectors: [
+      ".product-list.product-list--list-page",
+      ".product-list__product-name",
+    ] as string[],
+    postLoadWaitMs: 700,
+    logLabel: "Vatan",
+  };
+
+  if (isFetchForcePlaywright()) {
+    return fetchTextPlaywright(url, { ...vatanPwOpts });
+  }
+
+  try {
+    return useSession
+      ? await fetchTextCurlWithSession(url, `${BASE}/`, curlOpts)
+      : await fetchTextCurl(url, curlOpts);
+  } catch {
+    return fetchTextPlaywright(url, { ...vatanPwOpts });
+  }
 }
 
 /**
@@ -119,50 +163,71 @@ export async function searchVatan(
   if (!slugs.length) return [];
 
   const categorySeg = vatanCategorySegment(typeHint);
+  const budgetMs = getPerStoreTimeoutMs();
+  const t0 = Date.now();
 
   for (let i = 0; i < slugs.length; i++) {
+    if (Date.now() - t0 >= budgetMs) break;
     const pathSeg = slugs[i];
 
-    const attempts: string[] = [];
-    if (categorySeg) {
-      attempts.push(buildListUrl(pathSeg, categorySeg));
-    }
-    attempts.push(buildListUrl(pathSeg, undefined));
-
-    const vatanPwOpts = {
-      referer: `${BASE}/`,
-      waitForAnySelectors: [".product-list.product-list--list-page", ".product-list__product-name"] as string[],
-      postLoadWaitMs: 700,
-      logLabel: "Vatan",
-    };
+    const attempts: Array<{ categorySeg?: string }> = [];
+    if (categorySeg) attempts.push({ categorySeg });
+    attempts.push({});
 
     for (let j = 0; j < attempts.length; j++) {
-      const url = attempts[j];
-      let html = "";
-      if (isFetchForcePlaywright()) {
+      if (Date.now() - t0 >= budgetMs) break;
+      const attempt = attempts[j];
+
+      const merged: Product[] = [];
+      const seen = new Set<string>();
+      let consecutiveEmpty = 0;
+      let stopAttempt = false;
+
+      for (let pg = 1; pg <= HARD_PAGE_SAFETY_CAP; pg++) {
+        if (Date.now() - t0 >= budgetMs) {
+          stopAttempt = true;
+          break;
+        }
+
+        const url = buildListUrl(pathSeg, attempt.categorySeg, pg);
+        let html = "";
         try {
-          html = await fetchTextPlaywright(url, { ...vatanPwOpts });
+          html = await fetchVatanPage(url, i === 0 && j === 0 && pg === 1);
         } catch {
+          stopAttempt = true;
+          break;
+        }
+
+        const page = parseVatanHtml(html, PARSE_LIST_LIMIT);
+        let newUrls = 0;
+        for (const p of page) {
+          if (seen.has(p.url)) continue;
+          seen.add(p.url);
+          merged.push(p);
+          newUrls += 1;
+        }
+
+        if (page.length === 0 || newUrls === 0) {
+          consecutiveEmpty += 1;
+          const relevantSoFar = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
+          const inRangeSoFar = filterProductsByPriceRange(relevantSoFar, priceRange);
+          if (inRangeSoFar.length >= max) break;
+          if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
           continue;
         }
-      } else {
-        try {
-          html =
-            i === 0 && j === 0
-              ? await fetchTextCurlWithSession(url, `${BASE}/`, curlOpts)
-              : await fetchTextCurl(url, curlOpts);
-        } catch {
-          try {
-            html = await fetchTextPlaywright(url, { ...vatanPwOpts });
-          } catch {
-            continue;
-          }
-        }
+        consecutiveEmpty = 0;
+
+        const relevantSoFar = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
+        if (shouldStopByCheapestRelevantAboveMax(relevantSoFar, priceRange)) break;
+        const inRange = filterProductsByPriceRange(relevantSoFar, priceRange);
+        if (inRange.length >= max) break;
+        if (pageHasOnlyAboveMax(page, priceRange)) break;
       }
-      const parsed = parseVatanHtml(html, PARSE_LIST_LIMIT);
-      let relevant = filterProductsByQuery(query, parsed, undefined, exactMatch, onlyNew);
+
+      let relevant = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
       relevant = filterProductsByPriceRange(relevant, priceRange);
       if (relevant.length > 0) return takeCheapestProducts(relevant, max);
+      if (stopAttempt) break;
     }
   }
 

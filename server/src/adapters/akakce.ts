@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
-import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
-import { fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
+import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchConfig.ts";
+import { createFetchSession, fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
@@ -15,6 +15,9 @@ import {
 const BASE = "https://www.akakce.com";
 const PER_PAGE_CAP = 40;
 
+/** Ardışık boş sayfa toleransı: geçici olarak boş dönen sayfada hemen pes edilmesin. */
+const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
+
 function isAkakceChallengePage(html: string): boolean {
   return (
     html.includes("<title>Just a moment...</title>") ||
@@ -24,15 +27,6 @@ function isAkakceChallengePage(html: string): boolean {
 
 function isAkakceNoResultsPage(html: string): boolean {
   return html.includes("Özür dileriz, aradığınız ürünü bulamadık.");
-}
-
-function akakceBudgetMs(): number {
-  const raw = process.env.STREAM_PER_STORE_TIMEOUT_MS?.trim();
-  if (raw && raw !== "") {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) return Math.floor(n);
-  }
-  return 90_000;
 }
 
 function normalizeAkakceUrl(raw: string): string {
@@ -177,10 +171,12 @@ export async function searchAkakce(
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
-  const budgetMs = akakceBudgetMs();
+  const budgetMs = getPerStoreTimeoutMs();
   const t0 = Date.now();
   const merged: Product[] = [];
+  const session = createFetchSession();
 
+  let consecutiveEmpty = 0;
   for (let pg = 1; ; pg++) {
     if (Date.now() - t0 >= budgetMs) break;
 
@@ -194,7 +190,11 @@ export async function searchAkakce(
         postLoadWaitMs: 500,
       },
       "Akakçe",
-      { shouldFallbackToPlaywright: isAkakceChallengePage },
+      {
+        shouldFallbackToPlaywright: isAkakceChallengePage,
+        shouldFallbackToHeadedBrowser: isAkakceChallengePage,
+        session,
+      },
     );
 
     if (pg === 1 && isAkakceChallengePage(html)) {
@@ -205,7 +205,15 @@ export async function searchAkakce(
     if (pg === 1 && isAkakceNoResultsPage(html)) break;
 
     const page = dedupeByUrl([...parseAkakceJsonLd(html), ...parseAkakceCards(html)]);
-    if (page.length === 0) break;
+    if (page.length === 0) {
+      consecutiveEmpty += 1;
+      const relevantSoFar = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
+      const inRangeSoFar = filterProductsByPriceRange(relevantSoFar, priceRange);
+      if (inRangeSoFar.length >= max) break;
+      if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
+      continue;
+    }
+    consecutiveEmpty = 0;
     for (const p of page) merged.push(p);
 
     const relevantSoFar = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);

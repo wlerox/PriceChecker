@@ -1,6 +1,6 @@
 import { chromium, type BrowserContext, type Page } from "playwright";
 import type { Product } from "../../../shared/types.ts";
-import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
+import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchConfig.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
@@ -16,15 +16,6 @@ const STORE_NAME = "Google Alışveriş";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROFILE_DIR = path.resolve(__dirname, "..", "..", ".google-shopping-profile");
-
-function budgetMs(): number {
-  const raw = process.env.STREAM_PER_STORE_TIMEOUT_MS?.trim();
-  if (raw && raw !== "") {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) return Math.floor(n);
-  }
-  return 90_000;
-}
 
 function tag(msg: string): string {
   return `[fetch:GShop] ${msg}`;
@@ -99,12 +90,60 @@ async function createPersistentContext(): Promise<BrowserContext> {
   });
 }
 
-async function fetchGoogleShoppingProducts(query: string): Promise<Product[]> {
+async function extractCardsFromPage(page: Page): Promise<Array<{ label: string }>> {
+  return page.evaluate(() => {
+    const results: Array<{ label: string }> = [];
+    document.querySelectorAll("div.njFjte").forEach((el) => {
+      const label = el.getAttribute("aria-label") ?? "";
+      if (label && label.includes("₺")) results.push({ label });
+    });
+    return results;
+  });
+}
+
+function cardsToProducts(
+  cards: Array<{ label: string }>,
+  searchUrl: string,
+  seen: Set<string>,
+  out: Product[],
+): number {
+  let added = 0;
+  for (const { label } of cards) {
+    const parsed = parseProductFromAriaLabel(label);
+    if (!parsed) continue;
+
+    const key = `${parsed.title}|${parsed.price}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    out.push({
+      store: STORE_NAME,
+      title: parsed.title,
+      price: parsed.price,
+      currency: "TRY",
+      url: searchUrl,
+    });
+    added += 1;
+  }
+  return added;
+}
+
+/** Ardışık durağan (yeni kart eklenmeyen) scroll turu toleransı. */
+const MAX_STAGNANT_ROUNDS = 3;
+
+async function fetchGoogleShoppingProducts(
+  query: string,
+  opts: { max: number; priceRange?: PriceRange; exactMatch: boolean; onlyNew: boolean },
+): Promise<Product[]> {
   const q = encodeURIComponent(query.trim());
   const url = `${SEARCH_BASE}?q=${q}&udm=28&hl=tr&gl=tr`;
   const searchUrl = `https://www.google.com.tr/search?q=${q}&udm=28&hl=tr&gl=tr`;
 
+  const budgetMs = getPerStoreTimeoutMs();
   const t0 = Date.now();
+  const elapsed = () => Date.now() - t0;
+  const budgetLeft = () => budgetMs - elapsed();
+
   const context = await createPersistentContext();
 
   try {
@@ -126,50 +165,48 @@ async function fetchGoogleShoppingProducts(query: string): Promise<Product[]> {
       );
     }
 
-    for (let i = 0; i < 4; i++) {
+    const out: Product[] = [];
+    const seenKeys = new Set<string>();
+
+    const firstCards = await extractCardsFromPage(page);
+    cardsToProducts(firstCards, searchUrl, seenKeys, out);
+
+    let stagnantRounds = 0;
+    let lastCount = out.length;
+    let round = 0;
+    while (budgetLeft() > 1_500 && stagnantRounds < MAX_STAGNANT_ROUNDS) {
+      round += 1;
       await page.evaluate(() => window.scrollBy(0, window.innerHeight * 0.8));
       await page.waitForTimeout(500);
+
+      const cards = await extractCardsFromPage(page);
+      cardsToProducts(cards, searchUrl, seenKeys, out);
+
+      if (out.length === lastCount) {
+        stagnantRounds += 1;
+      } else {
+        stagnantRounds = 0;
+        lastCount = out.length;
+      }
+
+      const relevantSoFar = filterProductsByQuery(
+        query,
+        out,
+        undefined,
+        opts.exactMatch,
+        opts.onlyNew,
+      );
+      const inRangeSoFar = filterProductsByPriceRange(relevantSoFar, opts.priceRange);
+      if (inRangeSoFar.length >= opts.max) break;
     }
 
-    const products = await page.evaluate(() => {
-      const results: Array<{ label: string }> = [];
-      document.querySelectorAll("div.njFjte").forEach((el) => {
-        const label = el.getAttribute("aria-label") ?? "";
-        if (label && label.includes("₺")) {
-          results.push({ label });
-        }
-      });
-      return results;
-    });
-
-    const ms = Date.now() - t0;
-    console.info(tag(`ok | url=${url} | cards=${products.length} | ${ms}ms`));
-
-    const out: Product[] = [];
-    const seen = new Set<string>();
-
-    for (const { label } of products) {
-      const parsed = parseProductFromAriaLabel(label);
-      if (!parsed) continue;
-
-      const key = `${parsed.title}|${parsed.price}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      out.push({
-        store: STORE_NAME,
-        title: parsed.title,
-        price: parsed.price,
-        currency: "TRY",
-        url: searchUrl,
-      });
-    }
-
+    console.info(
+      tag(`ok | url=${url} | cards=${out.length} | rounds=${round} | ${elapsed()}ms`),
+    );
     return out;
   } catch (e) {
-    const ms = Date.now() - t0;
     const msg = e instanceof Error ? e.message : String(e);
-    console.error(tag(`error | url=${url} | ${ms}ms | ${msg}`));
+    console.error(tag(`error | url=${url} | ${elapsed()}ms | ${msg}`));
     throw e;
   } finally {
     await context.close();
@@ -183,7 +220,7 @@ export async function searchGoogleShopping(
   onlyNew = false,
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
-  const raw = await fetchGoogleShoppingProducts(query);
+  const raw = await fetchGoogleShoppingProducts(query, { max, priceRange, exactMatch, onlyNew });
 
   let relevant = filterProductsByQuery(query, raw, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);

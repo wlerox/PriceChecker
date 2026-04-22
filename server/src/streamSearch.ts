@@ -4,6 +4,7 @@ import { sortProductsByPriceAsc } from "./sortProducts.ts";
 import { applyRelevanceFilters } from "./relevance.ts";
 import type { StoreJob } from "./storeJobs.ts";
 import { filterProductsByPriceRange, type PriceRange } from "./priceRange.ts";
+import { getPerStoreTimeoutMs } from "./config/fetchConfig.ts";
 
 type StreamLineStore = { type: "store"; store: string; products: Product[] };
 type StreamLineError = { type: "error"; store: string; message: string };
@@ -38,9 +39,13 @@ export async function writeSearchNdjsonStream(
   res.setHeader("X-Accel-Buffering", "no");
 
   type Pending = { ok: true; products: Product[] } | { ok: false; message: string };
-  const perStoreTimeoutMsRaw = process.env.STREAM_PER_STORE_TIMEOUT_MS;
-  const perStoreTimeoutMs =
-    perStoreTimeoutMsRaw && perStoreTimeoutMsRaw !== "" ? Number(perStoreTimeoutMsRaw) : 90000;
+  /**
+   * Outer "son çare" zaman aşımı = adapter bütçesi + 5 sn nefes payı.
+   * Adapter kendi iç bütçe kontrolüyle (`getPerStoreTimeoutMs`) zarifçe dönüp
+   * bilgilendirici mesajını fırlatsın; bu wrapper yalnızca adapter gerçekten
+   * takılıp kalırsa devreye girer.
+   */
+  const perStoreTimeoutMs = getPerStoreTimeoutMs() + 5_000;
 
   const pending = new Map<string, Promise<Pending>>();
   const relevantProducts: Product[] = [];

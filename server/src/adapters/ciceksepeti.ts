@@ -1,8 +1,13 @@
 import type { Product } from "../../../shared/types.ts";
 import { parseCiceksepetiListingHtml } from "../ciceksepetiHtml.ts";
-import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
+import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchConfig.ts";
 import { fetchTextCurl } from "../curlFetch.ts";
-import { fetchTextCurlThenPlaywright, isFetchForcePlaywright } from "../playwrightFetch.ts";
+import {
+  createFetchSession,
+  fetchTextCurlThenPlaywright,
+  isFetchForcePlaywright,
+  type FetchSession,
+} from "../playwrightFetch.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
 import {
@@ -21,18 +26,12 @@ const SORT_PRICE_ASC_PARAMS = "choice=1&orderby=3";
 /** Ardışık boş sayfa toleransı: site geçici olarak boş HTML dönerse pes etmeden birkaç deneme. */
 const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
 
-/** Emniyet sınırı: sonsuz sayfalama olmasın. */
-const MAX_PAGES = 20;
-
-/** `streamSearch` ile aynı ortam değişkeni ve varsayılan: sayfa döngüsü bu süre dolunca durur. */
-function ciceksepetiBudgetMs(): number {
-  const raw = process.env.STREAM_PER_STORE_TIMEOUT_MS?.trim();
-  if (raw && raw !== "") {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) return Math.floor(n);
-  }
-  return 90_000;
-}
+/**
+ * Runaway emniyeti (gerçek koşullarda vurulmaz): site 500 sayfa dolusu alakasız sonuç
+ * dönse bile buluruz-bulmayız bütçe dolana kadar taramak istiyoruz, ama sonsuz döngüyü
+ * olası bir pagination-hatası nedeniyle engellemek için çok geniş bir tavan.
+ */
+const HARD_PAGE_SAFETY_CAP = 500;
 
 async function fetchSuggestJson(keywordUrl: string): Promise<string | null> {
   if (isFetchForcePlaywright()) {
@@ -87,7 +86,7 @@ function buildPageUrl(base: string, page: number): string {
   return `${sortedBase}${sep}sayfa=${page}`;
 }
 
-async function fetchCiceksepetiPage(pageUrl: string): Promise<string> {
+async function fetchCiceksepetiPage(pageUrl: string, session: FetchSession): Promise<string> {
   return fetchTextCurlThenPlaywright(
     pageUrl,
     {
@@ -106,6 +105,7 @@ async function fetchCiceksepetiPage(pageUrl: string): Promise<string> {
     "Çiçeksepeti",
     {
       shouldFallbackToPlaywright: (html) => html.length < 2000,
+      session,
     },
   );
 }
@@ -131,6 +131,17 @@ function dedupeByUrl(items: Product[]): Product[] {
   });
 }
 
+type PaginateOutcome = {
+  /** Yeterli sonuç toplandı / mantıklı şekilde bitti (doğal "sonuç sonu" dahil). */
+  finished: boolean;
+  /** HTML'i başarıyla alınıp parse edilen (exception fırlatmamış) sayfa sayısı. */
+  pagesFetched: number;
+  /** `fetchCiceksepetiPage`'den gelen son hata (varsa). */
+  lastError: Error | null;
+  /** Bütçe dolduğu için erken çıkıldı mı? */
+  timedOut: boolean;
+};
+
 async function paginate(
   baseUrl: string,
   query: string,
@@ -141,18 +152,32 @@ async function paginate(
   merged: Product[],
   t0: number,
   budgetMs: number,
-): Promise<boolean> {
+  session: FetchSession,
+  label: string,
+): Promise<PaginateOutcome> {
   let pg = 0;
   let consecutiveEmpty = 0;
-  while (pg < MAX_PAGES) {
-    if (Date.now() - t0 >= budgetMs) return false;
+  let pagesFetched = 0;
+  let lastError: Error | null = null;
+  while (pg < HARD_PAGE_SAFETY_CAP) {
+    if (Date.now() - t0 >= budgetMs) {
+      console.info(
+        `[fetch:Çiçeksepeti] ${label} bütçe doldu (sayfa=${pg}, toplam=${merged.length})`,
+      );
+      return { finished: false, pagesFetched, lastError, timedOut: true };
+    }
     pg += 1;
 
     const pageUrl = buildPageUrl(baseUrl, pg);
     let html: string;
     try {
-      html = await fetchCiceksepetiPage(pageUrl);
-    } catch {
+      html = await fetchCiceksepetiPage(pageUrl, session);
+      pagesFetched += 1;
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
+      console.warn(
+        `[fetch:Çiçeksepeti] ${label} sayfa=${pg} çekilemedi: ${lastError.message}`,
+      );
       consecutiveEmpty += 1;
       if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
       continue;
@@ -163,7 +188,7 @@ async function paginate(
       consecutiveEmpty += 1;
       const relevantSoFar = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
       const inRangeSoFar = filterProductsByPriceRange(relevantSoFar, priceRange);
-      if (inRangeSoFar.length >= max) return true;
+      if (inRangeSoFar.length >= max) return { finished: true, pagesFetched, lastError, timedOut: false };
       if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
       continue;
     }
@@ -172,12 +197,12 @@ async function paginate(
     for (const p of batch) merged.push(p);
 
     const relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
-    if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) return true;
+    if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) return { finished: true, pagesFetched, lastError, timedOut: false };
     const inRange = filterProductsByPriceRange(relevant, priceRange);
-    if (inRange.length >= max) return true;
-    if (pageHasOnlyAboveMax(batch, priceRange)) return true;
+    if (inRange.length >= max) return { finished: true, pagesFetched, lastError, timedOut: false };
+    if (pageHasOnlyAboveMax(batch, priceRange)) return { finished: true, pagesFetched, lastError, timedOut: false };
   }
-  return false;
+  return { finished: true, pagesFetched, lastError, timedOut: false };
 }
 
 export async function searchCiceksepeti(
@@ -191,12 +216,15 @@ export async function searchCiceksepeti(
   if (!q) return [];
 
   const merged: Product[] = [];
-  const budgetMs = ciceksepetiBudgetMs();
+  const budgetMs = getPerStoreTimeoutMs();
   const t0 = Date.now();
+  const session = createFetchSession();
 
   /** 1) Ana arama yolu: `/arama?qt=...&query=...` */
   const aramaBase = `${SITE}/arama?qt=${encodeURIComponent(q)}&query=${encodeURIComponent(q)}`;
-  await paginate(aramaBase, query, priceRange, exactMatch, onlyNew, max, merged, t0, budgetMs);
+  const r1 = await paginate(
+    aramaBase, query, priceRange, exactMatch, onlyNew, max, merged, t0, budgetMs, session, "arama",
+  );
 
   /** 2) Yeterli eşleşme yoksa ve bütçe kaldıysa kategori önerisini dene */
   const unique0 = dedupeByUrl(merged);
@@ -204,17 +232,60 @@ export async function searchCiceksepeti(
     filterProductsByQuery(query, unique0, undefined, exactMatch, onlyNew),
     priceRange,
   );
+  let r2: PaginateOutcome | null = null;
   if (relevant0.length < max && Date.now() - t0 < budgetMs) {
     const suggestPath = await resolveSuggestPath(q);
     if (suggestPath) {
       const normalized = suggestPath.startsWith("/") ? suggestPath : `/${suggestPath}`;
       const catBase = `${SITE}${normalized}`;
-      await paginate(catBase, query, priceRange, exactMatch, onlyNew, max, merged, t0, budgetMs);
+      r2 = await paginate(
+        catBase, query, priceRange, exactMatch, onlyNew, max, merged, t0, budgetMs, session, "kategori",
+      );
     }
   }
 
   const unique = dedupeByUrl(merged);
   let relevant = filterProductsByQuery(query, unique, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
+
+  const totalPages = r1.pagesFetched + (r2?.pagesFetched ?? 0);
+  const timedOut = r1.timedOut || r2?.timedOut === true;
+  const lastError = r2?.lastError ?? r1.lastError;
+  const elapsedSec = Math.round((Date.now() - t0) / 1000);
+  const budgetSec = Math.round(budgetMs / 1000);
+
+  /**
+   * Kullanıcıya net sinyal ver: "Çiçeksepeti araması yapıldı ama aradığın ürün yok"
+   * Koçtaş WAF hatasındaki gibi `{type:"error"}` satırı üret ki UI'da kırmızı kart basılsın.
+   * Bu throw sadece gerçekten 0 eşleşme varsa yapılır; bir tane bile bulunursa normal dönülür.
+   */
+  if (relevant.length === 0) {
+    /** 1) Site hiç açılamadı (fetch başarısız) */
+    if (totalPages === 0) {
+      if (lastError) {
+        throw new Error(`Çiçeksepeti'ne ulaşılamadı: ${lastError.message}`);
+      }
+      if (timedOut) {
+        throw new Error(
+          `Çiçeksepeti: ${budgetSec} sn arama bütçesi doldu, hiçbir sayfa çekilemedi.`,
+        );
+      }
+      throw new Error("Çiçeksepeti: hiçbir sayfa çekilemedi.");
+    }
+
+    /** 2) Sayfa(lar) tarandı ama eşleşme çıkmadı. (Bulunan ham ürün sayısını mesaja eklemek ayıklamayı kolaylaştırır.) */
+    const candidate = unique.length;
+    if (timedOut) {
+      throw new Error(
+        `Çiçeksepeti: "${query}" için ${budgetSec} sn arama bütçesi doldu, eşleşen ürün bulunamadı ` +
+          `(${totalPages} sayfa tarandı, ${candidate} aday ürün elendi, süre=${elapsedSec}s).`,
+      );
+    }
+    throw new Error(
+      `Çiçeksepeti: "${query}" için eşleşen ürün bulunamadı ` +
+        `(${totalPages} sayfa tarandı, ${candidate} aday ürün elendi, süre=${elapsedSec}s).`,
+    );
+  }
+
   return takeCheapestProducts(relevant, max);
 }

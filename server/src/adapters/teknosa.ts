@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
-import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
-import { fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
+import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchConfig.ts";
+import { createFetchSession, fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
@@ -16,19 +16,13 @@ import {
 const BASE = "https://www.teknosa.com";
 /** Sayfa limiti yok; budget (timeout) dolana veya yeni ürün kalmayınca durur. */
 
+/** Ardışık boş sayfa toleransı: geçici olarak boş dönen sayfada hemen pes edilmesin. */
+const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
+
 function buildSearchUrl(query: string, page = 1): string {
   const q = encodeURIComponent(query.trim());
   const base = `${BASE}/arama?sort=price-asc&q=${q}`;
   return page > 1 ? `${base}&page=${page}` : base;
-}
-
-function budgetMs(): number {
-  const raw = process.env.STREAM_PER_STORE_TIMEOUT_MS?.trim();
-  if (raw && raw !== "") {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) return Math.floor(n);
-  }
-  return 45_000;
 }
 
 function normalizeTeknosaUrl(raw: string): string {
@@ -132,7 +126,7 @@ export async function searchTeknosa(
   onlyNew = false,
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
-  const budget = budgetMs();
+  const budget = getPerStoreTimeoutMs();
   const t0 = Date.now();
   const elapsed = () => Date.now() - t0;
 
@@ -163,6 +157,8 @@ export async function searchTeknosa(
     logLabel: "Teknosa",
   };
 
+  let consecutiveEmpty = 0;
+  const session = createFetchSession();
   for (let pg = 1; ; pg++) {
     if (elapsed() > budget - 5000) {
       console.info(`[fetch:Teknosa] budget doldu (${elapsed()}ms), sayfalama durdu`);
@@ -172,7 +168,7 @@ export async function searchTeknosa(
     const url = buildSearchUrl(query, pg);
 
     try {
-      const html = await fetchTextCurlThenPlaywright(url, curlOpts, pwOpts, "Teknosa");
+      const html = await fetchTextCurlThenPlaywright(url, curlOpts, pwOpts, "Teknosa", { session });
       const items = parseTeknosaHtml(html);
       const added = mergePageResults(items, pg);
 
@@ -181,9 +177,20 @@ export async function searchTeknosa(
       );
 
       if (added === 0) {
-        console.info(`[fetch:Teknosa] sayfa ${pg}'de yeni ürün yok, sayfalama durdu`);
-        break;
+        consecutiveEmpty += 1;
+        const relevantSoFar = filterProductsByQuery(query, allProducts, pageMap, exactMatch, onlyNew);
+        const inRangeSoFar = filterProductsByPriceRange(relevantSoFar, priceRange);
+        if (inRangeSoFar.length >= max) {
+          console.info(`[fetch:Teknosa] yeterli aralık içi ürün (${inRangeSoFar.length}/${max}), sayfalama durdu`);
+          break;
+        }
+        if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+          console.info(`[fetch:Teknosa] ardışık ${consecutiveEmpty} boş sayfa, sayfalama durdu`);
+          break;
+        }
+        continue;
       }
+      consecutiveEmpty = 0;
 
       const relevant = filterProductsByQuery(query, allProducts, pageMap, exactMatch, onlyNew);
       if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) {

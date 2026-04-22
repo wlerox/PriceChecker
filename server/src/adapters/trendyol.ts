@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
 import type { Product } from "../../../shared/types.ts";
-import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
+import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchConfig.ts";
 import { launchChromiumPreferInstalled, playwrightHeadless } from "../playwrightLaunch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
@@ -25,16 +25,6 @@ function delay(ms: number): Promise<void> {
 
 /** Ardışık boş sayfa toleransı: site geçici olarak boş HTML dönerse pes etmeden birkaç deneme. */
 const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
-
-/** `streamSearch` ile aynı ortam değişkeni ve varsayılan: sayfa döngüsü bu süre dolunca durur. */
-function trendyolBudgetMs(): number {
-  const raw = process.env.STREAM_PER_STORE_TIMEOUT_MS?.trim();
-  if (raw && raw !== "") {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) return Math.floor(n);
-  }
-  return 90_000;
-}
 
 function collectPriceText($: cheerio.CheerioAPI, card: cheerio.Cheerio<any>): string {
   const chunks: string[] = [];
@@ -291,7 +281,7 @@ export async function searchTrendyol(
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim().toLocaleLowerCase("tr"));
   const byUrl = new Map<string, Product>();
-  const budgetMs = trendyolBudgetMs();
+  const budgetMs = getPerStoreTimeoutMs();
   const t0 = Date.now();
 
   const browser = await launchChromiumPreferInstalled(playwrightHeadless());
