@@ -66,6 +66,7 @@ type SearchDeps = {
     onlyStores?: string[],
     priceRange?: { min?: number; max?: number },
     exactMatch?: boolean,
+    onlyNew?: boolean,
   ) => StoreJob[];
   notifyBestPriceFn?: typeof sendBestPriceTelegramMessage;
 };
@@ -125,7 +126,7 @@ export function createApp(deps: SearchDeps = {}) {
       return;
     }
     const priceRange = priceRangeResult.range;
-    const jobs = createStoreJobsFn(q, searchType, onlyStores, priceRange, exactMatch);
+    const jobs = createStoreJobsFn(q, searchType, onlyStores, priceRange, exactMatch, onlyNew);
     if (jobs.length === 0) {
       res.status(400).json({ error: "En az bir geçerli mağaza seçin (stores parametresi)." });
       return;
@@ -202,7 +203,7 @@ export function createApp(deps: SearchDeps = {}) {
     const priceRange = priceRangeResult.range;
 
     try {
-      const jobs = createStoreJobsFn(q, searchType, onlyStores, priceRange, exactMatch);
+      const jobs = createStoreJobsFn(q, searchType, onlyStores, priceRange, exactMatch, onlyNew);
       if (jobs.length === 0) {
         res.status(400).json({ error: "En az bir geçerli mağaza seçin (stores parametresi)." });
         return;

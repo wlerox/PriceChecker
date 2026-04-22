@@ -85,22 +85,39 @@ function titleMatchesQueryTokensExactly(foldedTitle: string, foldedTokens: strin
 
 /**
  * Ürün başlığında arama terimleri yeterince geçmiyorsa ele (geniş mağaza araması gürültüsünü keser).
+ * `onlyNew` true ise başlıkta "yenilenmiş / teşhir / sıfırdan farksız" vb. geçen satırlar da elenir.
  */
 export function filterProductsByQuery(
   query: string,
   products: Product[],
   pageMap?: Map<string, number>,
   exactMatch = false,
+  onlyNew = false,
 ): Product[] {
   const tokens = [...new Set(queryTokensForMatch(query))];
-  if (tokens.length === 0) return products;
   const foldedTokens = tokens.map(foldForMatch);
+  const loggingOn = isRelevanceLoggingEnabled();
   return products.filter((p) => {
     const t = foldForMatch(p.title);
-    const ok = exactMatch
-      ? titleMatchesQueryTokensExactly(t, foldedTokens)
-      : titleMatchesQueryTokensInOrder(t, foldedTokens);
-    if (isRelevanceLoggingEnabled()) {
+    let ok: boolean;
+    if (tokens.length === 0) {
+      ok = true;
+    } else {
+      ok = exactMatch
+        ? titleMatchesQueryTokensExactly(t, foldedTokens)
+        : titleMatchesQueryTokensInOrder(t, foldedTokens);
+    }
+    if (ok && onlyNew && isNonNewTitle(p.title)) {
+      if (loggingOn) {
+        const pg = pageMap?.get(p.url);
+        const pgTag = pg != null ? ` sayfa=${pg}` : "";
+        console.info(
+          `[relevance] ✗ sıfır-değil elendi: [${p.store}]${pgTag} ${p.price} TL "${p.title.slice(0, 80)}"`,
+        );
+      }
+      return false;
+    }
+    if (loggingOn && tokens.length > 0) {
       const pg = pageMap?.get(p.url);
       const pgTag = pg != null ? ` sayfa=${pg}` : "";
       if (ok) {
@@ -191,9 +208,8 @@ export function applyRelevanceFilters(
   onlyNew = false,
 ): Product[] {
   if (products.length === 0) return [];
-  let relevant = filterProductsByQuery(query, products, undefined, exactMatch);
+  let relevant = filterProductsByQuery(query, products, undefined, exactMatch, onlyNew);
   relevant = filterProductsBySearchType(searchType, relevant);
-  if (onlyNew) relevant = filterOutNonNewProducts(relevant);
   return relevant;
 }
 

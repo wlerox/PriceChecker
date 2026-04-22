@@ -94,6 +94,7 @@ export async function searchKoctas(
   query: string,
   priceRange?: PriceRange,
   exactMatch = false,
+  onlyNew = false,
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
@@ -132,7 +133,7 @@ export async function searchKoctas(
     }
   }
 
-  let relevant = filterProductsByQuery(query, merged, undefined, exactMatch);
+  let relevant = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
   const fallback = filterProductsByPriceRange(merged, priceRange);
   return takeCheapestProducts(relevant.length > 0 ? relevant : fallback, max);

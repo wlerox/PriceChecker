@@ -180,11 +180,12 @@ export async function searchGoogleShopping(
   query: string,
   priceRange?: PriceRange,
   exactMatch = false,
+  onlyNew = false,
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const raw = await fetchGoogleShoppingProducts(query);
 
-  let relevant = filterProductsByQuery(query, raw, undefined, exactMatch);
+  let relevant = filterProductsByQuery(query, raw, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
   return takeCheapestProducts(relevant, max);
 }

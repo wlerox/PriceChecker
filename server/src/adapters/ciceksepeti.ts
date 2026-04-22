@@ -67,6 +67,7 @@ export async function searchCiceksepeti(
   query: string,
   priceRange?: PriceRange,
   exactMatch = false,
+  onlyNew = false,
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = query.trim();
@@ -104,7 +105,7 @@ export async function searchCiceksepeti(
           currency: "TRY",
           url: r.url,
         }));
-        let relevant = filterProductsByQuery(query, mapped, undefined, exactMatch);
+        let relevant = filterProductsByQuery(query, mapped, undefined, exactMatch, onlyNew);
         relevant = filterProductsByPriceRange(relevant, priceRange);
         const fallback = filterProductsByPriceRange(mapped, priceRange);
         return takeCheapestProducts(relevant.length > 0 ? relevant : fallback, max);
@@ -120,7 +121,7 @@ export async function searchCiceksepeti(
     currency: "TRY",
     url: r.url,
   }));
-  let relevant = filterProductsByQuery(query, mapped, undefined, exactMatch);
+  let relevant = filterProductsByQuery(query, mapped, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
   const fallback = filterProductsByPriceRange(mapped, priceRange);
   return takeCheapestProducts(relevant.length > 0 ? relevant : fallback, max);

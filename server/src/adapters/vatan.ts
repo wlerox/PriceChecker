@@ -112,6 +112,7 @@ export async function searchVatan(
   typeHint?: string,
   priceRange?: PriceRange,
   exactMatch = false,
+  onlyNew = false,
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const slugs = slugCandidates(query);
@@ -159,7 +160,7 @@ export async function searchVatan(
         }
       }
       const parsed = parseVatanHtml(html, PARSE_LIST_LIMIT);
-      let relevant = filterProductsByQuery(query, parsed, undefined, exactMatch);
+      let relevant = filterProductsByQuery(query, parsed, undefined, exactMatch, onlyNew);
       relevant = filterProductsByPriceRange(relevant, priceRange);
       if (relevant.length > 0) return takeCheapestProducts(relevant, max);
     }

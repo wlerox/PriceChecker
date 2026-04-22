@@ -110,6 +110,7 @@ export async function searchPazarama(
   query: string,
   priceRange?: PriceRange,
   exactMatch = false,
+  onlyNew = false,
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
@@ -145,7 +146,7 @@ export async function searchPazarama(
     for (const p of page) merged.push(p);
     if (page.length === 0) break;
 
-    const relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch);
+    const relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
     if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;
     const inRange = filterProductsByPriceRange(relevant, priceRange);
     if (inRange.length >= max) break;
@@ -153,7 +154,7 @@ export async function searchPazarama(
   }
 
   const unique = dedupeByUrl(merged);
-  let relevant = filterProductsByQuery(query, unique, undefined, exactMatch);
+  let relevant = filterProductsByQuery(query, unique, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
   relevant.sort((a, b) => a.price - b.price);
   return relevant.slice(0, max);

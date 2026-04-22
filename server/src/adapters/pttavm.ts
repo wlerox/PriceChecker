@@ -97,6 +97,7 @@ export async function searchPttAvm(
   query: string,
   priceRange?: PriceRange,
   exactMatch = false,
+  onlyNew = false,
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
@@ -114,7 +115,7 @@ export async function searchPttAvm(
     out = productsFromCards(html, max);
   }
 
-  let relevant = filterProductsByQuery(query, dedupeByUrl(out), undefined, exactMatch);
+  let relevant = filterProductsByQuery(query, dedupeByUrl(out), undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
   const fallback = filterProductsByPriceRange(dedupeByUrl(out), priceRange);
   return takeCheapestProducts(relevant.length > 0 ? relevant : fallback, max);

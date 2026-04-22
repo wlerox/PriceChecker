@@ -173,6 +173,7 @@ export async function searchAkakce(
   query: string,
   priceRange?: PriceRange,
   exactMatch = false,
+  onlyNew = false,
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
@@ -207,14 +208,14 @@ export async function searchAkakce(
     if (page.length === 0) break;
     for (const p of page) merged.push(p);
 
-    const relevantSoFar = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch);
+    const relevantSoFar = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
     if (shouldStopByCheapestRelevantAboveMax(relevantSoFar, priceRange)) break;
     const inRange = filterProductsByPriceRange(relevantSoFar, priceRange);
     if (inRange.length >= max) break;
     if (pageHasOnlyAboveMax(page, priceRange)) break;
   }
 
-  let relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch);
+  let relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
   return takeCheapestProducts(relevant, max);
 }

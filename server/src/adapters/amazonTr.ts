@@ -139,9 +139,10 @@ function evaluateProducts(
   max: number,
   priceRange?: PriceRange,
   exactMatch = false,
+  onlyNew = false,
 ) {
   const all = dedupeByUrl(parseProductsFromHtml(html));
-  const relevantByQuery = filterProductsByQuery(query, all, undefined, exactMatch);
+  const relevantByQuery = filterProductsByQuery(query, all, undefined, exactMatch, onlyNew);
   const relevant = filterProductsByPriceRange(relevantByQuery, priceRange);
   const good = relevant.filter((p) => !isLikelyAccessory(p.title));
   return { all, relevant, good };
@@ -151,6 +152,7 @@ export async function searchAmazonTr(
   query: string,
   priceRange?: PriceRange,
   exactMatch = false,
+  onlyNew = false,
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim()).replace(/%20/g, "+");
@@ -161,7 +163,7 @@ export async function searchAmazonTr(
     try {
       const curlHtml = await fetchTextCurl(url, { referer: `${BASE}/` });
       if (curlHtml && curlHtml.length > 200 && hasAmazonSearchGrid(curlHtml) && !isAmazonErrorPage(curlHtml)) {
-        const { all, relevant, good } = evaluateProducts(curlHtml, query, max, priceRange, exactMatch);
+        const { all, relevant, good } = evaluateProducts(curlHtml, query, max, priceRange, exactMatch, onlyNew);
         if (good.length >= max) {
           const result = pickBestAmazonProducts(relevant, max);
           console.info(`[Amazon TR] curl ok → ${all.length} aday, ${relevant.length} eşleşen, ${good.length} ana ürün → seçilen ${result.length}`);
@@ -180,7 +182,7 @@ export async function searchAmazonTr(
   const html = await fetchAmazonWithPaging(
     url,
     (combinedHtml, pageNum) => {
-      const { all, relevant, good } = evaluateProducts(combinedHtml, query, max, priceRange, exactMatch);
+      const { all, relevant, good } = evaluateProducts(combinedHtml, query, max, priceRange, exactMatch, onlyNew);
       console.info(`[Amazon TR] sayfa ${pageNum} → ${all.length} aday, ${relevant.length} eşleşen, ${good.length} ana ürün (hedef=${max})`);
       return good.length >= max;
     },
@@ -192,7 +194,7 @@ export async function searchAmazonTr(
     throw new Error("Amazon TR arama sayfası yüklenemedi (bot algılandı veya site hatası)");
   }
 
-  const { all, relevant } = evaluateProducts(html, query, max, priceRange, exactMatch);
+  const { all, relevant } = evaluateProducts(html, query, max, priceRange, exactMatch, onlyNew);
   const result = pickBestAmazonProducts(relevant, max);
   console.info(`[Amazon TR] toplam: ${all.length} aday → sorgu eşleşen ${relevant.length} → seçilen ${result.length} (max=${max})`);
   return result;

@@ -23,6 +23,9 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Ardışık boş sayfa toleransı: site geçici olarak boş HTML dönerse pes etmeden birkaç deneme. */
+const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
+
 /** `streamSearch` ile aynı ortam değişkeni ve varsayılan: sayfa döngüsü bu süre dolunca durur. */
 function trendyolBudgetMs(): number {
   const raw = process.env.STREAM_PER_STORE_TIMEOUT_MS?.trim();
@@ -283,6 +286,7 @@ export async function searchTrendyol(
   query: string,
   priceRange?: PriceRange,
   exactMatch = false,
+  onlyNew = false,
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim().toLocaleLowerCase("tr"));
@@ -305,31 +309,43 @@ export async function searchTrendyol(
     await delay(250);
 
     let pi = 0;
+    let consecutiveEmpty = 0;
     while (true) {
       if (Date.now() - t0 >= budgetMs) break;
       pi += 1;
       const searchUrl = `${BASE}/sr?q=${q}&${SORT_PRICE_ASC}&pi=${pi}`;
       await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
-      await page.waitForLoadState("networkidle", { timeout: 6000 }).catch(() => {});
+      await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
       await Promise.race([
-        page.waitForSelector('[data-testid="product-card"]', { timeout: 4000 }),
-        page.waitForSelector('a[href*="-p-"]', { timeout: 4000 }),
+        page.waitForSelector('[data-testid="product-card"]', { timeout: 8000 }),
+        page.waitForSelector('a[href*="-p-"]', { timeout: 8000 }),
       ]).catch(() => {});
       await delay(200);
       await page.evaluate(() => window.scrollBy(0, Math.floor(window.innerHeight * 0.7))).catch(() => {});
-      await delay(160);
+      await delay(250);
 
       const html = await page.content();
       const $ = cheerio.load(html);
       const snapSeen = new Set<string>();
       const batch = parseTrendyolSnapshot($, snapSeen);
+
+      if (batch.length === 0) {
+        consecutiveEmpty += 1;
+        const relevantSoFar = filterProductsByQuery(query, [...byUrl.values()], undefined, exactMatch, onlyNew);
+        const inRangeSoFar = filterProductsByPriceRange(relevantSoFar, priceRange);
+        // Yeterince eşleşme topladıysak boş sayfa doğal "sonuç sonu" → dur.
+        if (inRangeSoFar.length >= max) break;
+        // Henüz bulamadıysak geçici olabilir (bot challenge / yavaş render); sınıra kadar devam.
+        if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
+        continue;
+      }
+      consecutiveEmpty = 0;
+
       for (const p of batch) {
         byUrl.set(p.url, p);
       }
 
-      if (batch.length === 0) break;
-
-      const relevant = filterProductsByQuery(query, [...byUrl.values()], undefined, exactMatch);
+      const relevant = filterProductsByQuery(query, [...byUrl.values()], undefined, exactMatch, onlyNew);
       if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;
       const inRange = filterProductsByPriceRange(relevant, priceRange);
       if (inRange.length >= max) break;
@@ -342,7 +358,7 @@ export async function searchTrendyol(
   }
 
   const out = [...byUrl.values()];
-  let relevant = filterProductsByQuery(query, out, undefined, exactMatch);
+  let relevant = filterProductsByQuery(query, out, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
   relevant.sort((a, b) => a.price - b.price);
   return relevant.slice(0, max);

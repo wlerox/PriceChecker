@@ -66,10 +66,14 @@ function dedupeByUrl(items: Product[]): Product[] {
   });
 }
 
+/** Ardışık boş sayfa toleransı: site geçici olarak boş HTML dönerse pes etmeden bir kaç deneme. */
+const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
+
 export async function searchIdefix(
   query: string,
   priceRange?: PriceRange,
   exactMatch = false,
+  onlyNew = false,
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
@@ -78,6 +82,7 @@ export async function searchIdefix(
   const t0 = Date.now();
 
   let pg = 0;
+  let consecutiveEmpty = 0;
   while (true) {
     if (Date.now() - t0 >= budgetMs) break;
     pg += 1;
@@ -90,12 +95,24 @@ export async function searchIdefix(
       "İdefix"
     );
     const page = parseProductsFromHtml(html);
+
+    if (page.length === 0) {
+      consecutiveEmpty += 1;
+      const relevantSoFar = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
+      const inRangeSoFar = filterProductsByPriceRange(relevantSoFar, priceRange);
+      // Önceki sayfalarda fiyat aralığında eşleşme bulunduysa boş sayfa doğal "sonuç sonu".
+      if (inRangeSoFar.length >= max) break;
+      // Hiç eşleşme yok; geçici hata olabilir → tolerans sınırına kadar devam.
+      if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
+      continue;
+    }
+    consecutiveEmpty = 0;
+
     for (const p of page) {
       merged.push(p);
     }
-    if (page.length === 0) break;
 
-    const relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch);
+    const relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
     if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;
     const inRange = filterProductsByPriceRange(relevant, priceRange);
     if (inRange.length >= max) break;
@@ -103,7 +120,7 @@ export async function searchIdefix(
   }
 
   const unique = dedupeByUrl(merged);
-  let relevant = filterProductsByQuery(query, unique, undefined, exactMatch);
+  let relevant = filterProductsByQuery(query, unique, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
   relevant.sort((a, b) => a.price - b.price);
   return relevant.slice(0, max);

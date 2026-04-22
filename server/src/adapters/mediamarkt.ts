@@ -134,6 +134,7 @@ export async function searchMediaMarkt(
   query: string,
   priceRange?: PriceRange,
   exactMatch = false,
+  onlyNew = false,
 ): Promise<Product[]> {
   if (process.env.MEDIAMARKT_NO_PLAYWRIGHT === "1") return [];
 
@@ -162,7 +163,7 @@ export async function searchMediaMarkt(
         newUrls++;
       }
 
-      const relevant = filterProductsByQuery(query, merged, undefined, exactMatch);
+      const relevant = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
       if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;
       const inRange = filterProductsByPriceRange(relevant, priceRange);
       if (inRange.length >= max) break;
@@ -172,7 +173,7 @@ export async function searchMediaMarkt(
       if (batch.length === 0) break;
     }
 
-    let relevant = filterProductsByQuery(query, merged, undefined, exactMatch);
+    let relevant = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
     relevant = filterProductsByPriceRange(relevant, priceRange);
     return takeCheapestProducts(relevant, max);
   } catch (e) {
