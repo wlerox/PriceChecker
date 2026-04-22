@@ -82,7 +82,7 @@ export async function searchIdefix(
     if (Date.now() - t0 >= budgetMs) break;
     pg += 1;
 
-    const url = `${BASE}/arama?q=${q}&siralama=artanfiyat&sayfa=${pg}`;
+    const url = `${BASE}/arama?q=${q}&siralama=asc_price&sayfa=${pg}`;
     const html = await fetchTextCurlThenPlaywright(
       url,
       { referer: `${BASE}/`, origin: BASE, useHttp11: true, timeoutSec: 35 },

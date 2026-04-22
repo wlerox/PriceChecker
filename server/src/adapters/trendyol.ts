@@ -53,14 +53,64 @@ function collectPriceText($: cheerio.CheerioAPI, card: cheerio.Cheerio<any>): st
   return chunks.join(" ");
 }
 
+/**
+ * Başlığın kendisi "X X" biçiminde ardışık tekrarsa (ör. aria-label'da aynı cümle
+ * iki kez) ilk yarıyı döndürür. Trendyol'un bazı sponsorlu kartları aria-label'ı
+ * iki kopya olarak üretiyor; bu gürültü başlığa ve arama token eşleşmesine sızıyor.
+ */
+function collapseRepeatedTitle(s: string): string {
+  const n = s.length;
+  if (n < 24) return s;
+  // Başlangıç pencere ucunu (ilk 16-40 char) ileride tekrar arıyoruz.
+  const probeLen = Math.min(40, Math.max(16, Math.floor(n / 3)));
+  const probe = s.slice(0, probeLen).trim();
+  if (probe.length < 12) return s;
+  const idx = s.indexOf(probe, probeLen);
+  if (idx <= 0) return s;
+  // İlk yarının "tam" bir başlık olduğunu doğrula: en az birkaç boşluk içersin.
+  const head = s.slice(0, idx).trim();
+  if (!/\s/.test(head)) return s;
+  return head;
+}
+
+/**
+ * Trendyol ürün kartı başlığı: tek kanonik kaynak seç, gerekirse markayı başa ekle.
+ *
+ * Eskiden `brandLine + imgAlt + heading + linkAria + linkText` birleştiriliyordu;
+ * bu hem açıklamayı birkaç kez tekrarlıyor hem de `linkText` içindeki fiyat/puan
+ * rakamları başlığa sızıp `filterProductsByQuery` token eşleşmesini yanıltıyordu
+ * (ör. "rtx 5080" sorgusu, fiyatı 25.080 TL olan RTX 5070 kartına eşleşiyordu).
+ */
 function buildTitle(card: cheerio.Cheerio<any>, link: cheerio.Cheerio<any>): string {
-  const imgAlt = card.find('[data-testid="image-img"]').first().attr("alt")?.trim() ?? "";
-  const brandLine = card.find('[data-testid="brand-name-wrapper"]').first().text().replace(/\s+/g, " ").trim();
-  const heading = card.find("h2.title, h2, h3").first().text().replace(/\s+/g, " ").trim();
-  const linkAria = (link.attr("aria-label") ?? link.attr("title") ?? "").trim();
-  const linkText = link.text().replace(/\s+/g, " ").trim();
-  const parts = [brandLine, imgAlt, heading, linkAria, linkText].filter(Boolean);
-  let title = parts.join(" ").replace(/\s+/g, " ").trim();
+  const norm = (s: string | undefined | null): string =>
+    (s ?? "").replace(/\s+/g, " ").trim();
+
+  const imgAlt = norm(card.find('[data-testid="image-img"]').first().attr("alt"));
+  const brand = norm(card.find('[data-testid="brand-name-wrapper"]').first().text());
+  const heading = norm(card.find("h2.title, h2, h3").first().text());
+  const linkAria = norm(link.attr("aria-label") ?? link.attr("title"));
+  const linkText = norm(link.text());
+
+  // Öncelik: aria-label > imgAlt > h2/h3 > link text (gürültülü, son çare).
+  // Her kaynakta "X X" ardışık tekrar varsa yarıya indir.
+  const base =
+    collapseRepeatedTitle(linkAria) ||
+    collapseRepeatedTitle(imgAlt) ||
+    collapseRepeatedTitle(heading) ||
+    collapseRepeatedTitle(linkText) ||
+    "Ürün";
+
+  // Marka zaten başlıkta (başta ya da ortada) geçmiyorsa, başa ekle.
+  let title = base;
+  if (brand) {
+    const brandFolded = brand.toLocaleLowerCase("tr");
+    const titleFolded = title.toLocaleLowerCase("tr");
+    if (!titleFolded.includes(brandFolded)) {
+      title = `${brand} ${title}`;
+    }
+  }
+
+  title = collapseRepeatedTitle(title.replace(/\s+/g, " ").trim());
   if (!title) title = "Ürün";
   return title.slice(0, 300);
 }
