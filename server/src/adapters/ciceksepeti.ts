@@ -2,20 +2,36 @@ import type { Product } from "../../../shared/types.ts";
 import { parseCiceksepetiListingHtml } from "../ciceksepetiHtml.ts";
 import { getMaxProductsPerStore } from "../config/fetchConfig.ts";
 import { fetchTextCurl } from "../curlFetch.ts";
-import { isFetchForcePlaywright } from "../playwrightFetch.ts";
-import { scrapeCiceksepetiListingPages } from "../playwrightCiceksepeti.ts";
+import { fetchTextCurlThenPlaywright, isFetchForcePlaywright } from "../playwrightFetch.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
-import { filterProductsByPriceRange, type PriceRange } from "../priceRange.ts";
+import {
+  filterProductsByPriceRange,
+  pageHasOnlyAboveMax,
+  shouldStopByCheapestRelevantAboveMax,
+  type PriceRange,
+} from "../priceRange.ts";
 
 const SITE = "https://www.ciceksepeti.com";
 const SUGGEST_API = "https://cs-web.ciceksepeti.com/store/api/v1/suggests/ch/search";
 
-/** orderby=3 → en düşük fiyat sıralaması */
-const SORT_PRICE_ASC = "choice=1&orderby=3";
+/** orderby=3 → en düşük fiyat sıralaması (choice=1 ise artan fiyat) */
+const SORT_PRICE_ASC_PARAMS = "choice=1&orderby=3";
 
-function appendSort(url: string): string {
-  return url + (url.includes("?") ? "&" : "?") + SORT_PRICE_ASC;
+/** Ardışık boş sayfa toleransı: site geçici olarak boş HTML dönerse pes etmeden birkaç deneme. */
+const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
+
+/** Emniyet sınırı: sonsuz sayfalama olmasın. */
+const MAX_PAGES = 20;
+
+/** `streamSearch` ile aynı ortam değişkeni ve varsayılan: sayfa döngüsü bu süre dolunca durur. */
+function ciceksepetiBudgetMs(): number {
+  const raw = process.env.STREAM_PER_STORE_TIMEOUT_MS?.trim();
+  if (raw && raw !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  }
+  return 90_000;
 }
 
 async function fetchSuggestJson(keywordUrl: string): Promise<string | null> {
@@ -63,6 +79,107 @@ async function resolveSuggestPath(query: string): Promise<string | null> {
   return null;
 }
 
+function buildPageUrl(base: string, page: number): string {
+  const joiner = base.includes("?") ? "&" : "?";
+  const sortedBase = base.includes("orderby=") ? base : `${base}${joiner}${SORT_PRICE_ASC_PARAMS}`;
+  if (page <= 1) return sortedBase;
+  const sep = sortedBase.includes("?") ? "&" : "?";
+  return `${sortedBase}${sep}sayfa=${page}`;
+}
+
+async function fetchCiceksepetiPage(pageUrl: string): Promise<string> {
+  return fetchTextCurlThenPlaywright(
+    pageUrl,
+    {
+      referer: `${SITE}/`,
+      origin: SITE,
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      useHttp11: true,
+      timeoutSec: 35,
+    },
+    {
+      referer: `${SITE}/`,
+      waitForAnySelectors: ['a[data-cs-product-box]', 'a[href*="kcm"]', 'a[href*="kcs"]'],
+      postLoadWaitMs: 600,
+      lazyScrollRounds: 3,
+    },
+    "Çiçeksepeti",
+    {
+      shouldFallbackToPlaywright: (html) => html.length < 2000,
+    },
+  );
+}
+
+function parsePage(html: string): Product[] {
+  if (html.length < 800) return [];
+  const parsed = parseCiceksepetiListingHtml(html);
+  return parsed.map((r) => ({
+    store: "Çiçeksepeti",
+    title: r.title,
+    price: r.price,
+    currency: "TRY",
+    url: r.url,
+  }));
+}
+
+function dedupeByUrl(items: Product[]): Product[] {
+  const seen = new Set<string>();
+  return items.filter((x) => {
+    if (seen.has(x.url)) return false;
+    seen.add(x.url);
+    return true;
+  });
+}
+
+async function paginate(
+  baseUrl: string,
+  query: string,
+  priceRange: PriceRange | undefined,
+  exactMatch: boolean,
+  onlyNew: boolean,
+  max: number,
+  merged: Product[],
+  t0: number,
+  budgetMs: number,
+): Promise<boolean> {
+  let pg = 0;
+  let consecutiveEmpty = 0;
+  while (pg < MAX_PAGES) {
+    if (Date.now() - t0 >= budgetMs) return false;
+    pg += 1;
+
+    const pageUrl = buildPageUrl(baseUrl, pg);
+    let html: string;
+    try {
+      html = await fetchCiceksepetiPage(pageUrl);
+    } catch {
+      consecutiveEmpty += 1;
+      if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
+      continue;
+    }
+
+    const batch = parsePage(html);
+    if (batch.length === 0) {
+      consecutiveEmpty += 1;
+      const relevantSoFar = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
+      const inRangeSoFar = filterProductsByPriceRange(relevantSoFar, priceRange);
+      if (inRangeSoFar.length >= max) return true;
+      if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
+      continue;
+    }
+    consecutiveEmpty = 0;
+
+    for (const p of batch) merged.push(p);
+
+    const relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
+    if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) return true;
+    const inRange = filterProductsByPriceRange(relevant, priceRange);
+    if (inRange.length >= max) return true;
+    if (pageHasOnlyAboveMax(batch, priceRange)) return true;
+  }
+  return false;
+}
+
 export async function searchCiceksepeti(
   query: string,
   priceRange?: PriceRange,
@@ -73,56 +190,31 @@ export async function searchCiceksepeti(
   const q = query.trim();
   if (!q) return [];
 
-  const suggestPath = await resolveSuggestPath(q);
-  const urls: string[] = [];
-  /** Önce tam arama URL’si (choice/orderby/qt/query); kategori önerisi sonra yedek — öneri sayfası farklı yükleme/sıra yapabiliyor. */
-  urls.push(appendSort(`${SITE}/arama?qt=${encodeURIComponent(q)}&query=${encodeURIComponent(q)}`));
-  if (suggestPath) urls.push(appendSort(`${SITE}${suggestPath.startsWith("/") ? suggestPath : `/${suggestPath}`}`));
+  const merged: Product[] = [];
+  const budgetMs = ciceksepetiBudgetMs();
+  const t0 = Date.now();
 
-  if (!isFetchForcePlaywright()) {
-    const curlOpts = {
-      referer: `${SITE}/`,
-      origin: SITE,
-      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      useHttp11: true as const,
-      timeoutSec: 35,
-    };
+  /** 1) Ana arama yolu: `/arama?qt=...&query=...` */
+  const aramaBase = `${SITE}/arama?qt=${encodeURIComponent(q)}&query=${encodeURIComponent(q)}`;
+  await paginate(aramaBase, query, priceRange, exactMatch, onlyNew, max, merged, t0, budgetMs);
 
-    for (const pageUrl of urls) {
-      let html: string;
-      try {
-        html = await fetchTextCurl(pageUrl, curlOpts);
-      } catch {
-        continue;
-      }
-      if (html.length < 800) continue;
-      const parsed = parseCiceksepetiListingHtml(html);
-      if (parsed.length > 0) {
-        const mapped = parsed.map((r) => ({
-          store: "Çiçeksepeti",
-          title: r.title,
-          price: r.price,
-          currency: "TRY",
-          url: r.url,
-        }));
-        let relevant = filterProductsByQuery(query, mapped, undefined, exactMatch, onlyNew);
-        relevant = filterProductsByPriceRange(relevant, priceRange);
-        const fallback = filterProductsByPriceRange(mapped, priceRange);
-        return takeCheapestProducts(relevant.length > 0 ? relevant : fallback, max);
-      }
+  /** 2) Yeterli eşleşme yoksa ve bütçe kaldıysa kategori önerisini dene */
+  const unique0 = dedupeByUrl(merged);
+  const relevant0 = filterProductsByPriceRange(
+    filterProductsByQuery(query, unique0, undefined, exactMatch, onlyNew),
+    priceRange,
+  );
+  if (relevant0.length < max && Date.now() - t0 < budgetMs) {
+    const suggestPath = await resolveSuggestPath(q);
+    if (suggestPath) {
+      const normalized = suggestPath.startsWith("/") ? suggestPath : `/${suggestPath}`;
+      const catBase = `${SITE}${normalized}`;
+      await paginate(catBase, query, priceRange, exactMatch, onlyNew, max, merged, t0, budgetMs);
     }
   }
 
-  const scraped = await scrapeCiceksepetiListingPages(urls);
-  const mapped = scraped.map((r) => ({
-    store: "Çiçeksepeti",
-    title: r.title,
-    price: r.price,
-    currency: "TRY",
-    url: r.url,
-  }));
-  let relevant = filterProductsByQuery(query, mapped, undefined, exactMatch, onlyNew);
+  const unique = dedupeByUrl(merged);
+  let relevant = filterProductsByQuery(query, unique, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
-  const fallback = filterProductsByPriceRange(mapped, priceRange);
-  return takeCheapestProducts(relevant.length > 0 ? relevant : fallback, max);
+  return takeCheapestProducts(relevant, max);
 }

@@ -45,18 +45,22 @@ function escapeRegExp(s: string): string {
 }
 
 /**
- * Token için mevcut kelime/sayı eşleşme kurallarını koruyan RegExp üretir.
+ * Token için sınır karakterlerini look-behind/look-ahead ile doğrulayan RegExp üretir.
+ * Yan karakterleri tüketmediğinden "128gb" gibi bitişik yazımda sıradaki token
+ * ("gb") da aynı harflerin üstünde eşleşebilir.
  */
 function buildTokenRegex(tok: string, flags = "u"): RegExp {
   const esc = escapeRegExp(tok);
   if (/\d/.test(tok)) {
     const isAllDigits = /^\d+$/.test(tok);
-    const afterBound = isAllDigits ? `(?:$|[^\\d])` : `(?:$|[^\\p{L}\\p{N}])`;
-    return new RegExp(`(?:^|[^\\p{L}\\p{N}])${esc}${afterBound}|\\p{L}${esc}(?:$|[^\\d])`, flags);
+    // Rakamdan sonra rakam gelmemeli; tümüyle rakam olmayan token için ek olarak alfanümerik de gelmemeli.
+    const afterBound = isAllDigits ? `(?=$|[^\\d])` : `(?=$|[^\\p{L}\\p{N}])`;
+    // Önce gelen: satır başı, alfanümerik olmayan bir karakter ya da bir harf (RTX5050 gibi bitişik yazım için).
+    return new RegExp(`(?<=^|[^\\p{L}\\p{N}]|\\p{L})${esc}${afterBound}`, flags);
   }
   // "ti", "se" gibi kısa tokenlar "karti", "bit" içinde yanlış eşleşmesin → kelime sınırı iste
   if (tok.length <= 2) {
-    return new RegExp(`(?:^|[^\\p{L}])${esc}(?:$|[^\\p{L}])`, flags);
+    return new RegExp(`(?<=^|[^\\p{L}])${esc}(?=$|[^\\p{L}])`, flags);
   }
   return new RegExp(esc, flags);
 }
@@ -68,9 +72,9 @@ function titleMatchesQueryTokensInOrder(foldedTitle: string, foldedTokens: strin
     re.lastIndex = from;
     const found = re.exec(foldedTitle);
     if (!found) return false;
-    // "RTX5050" gibi bitişik örneklerde ikinci tokenın bir önceki harfe bakabilmesi için
-    // sonraki aramayı bir karakter geri sararak başlat.
-    from = Math.max(0, re.lastIndex - 1);
+    // Look-behind/look-ahead tüketmediğinden match uzunluğu token ile aynı; sıradaki arama
+    // bu noktadan devam ederse "128gb" gibi bitişik örneklerde "gb" de eşleşebilir.
+    from = re.lastIndex;
   }
   return true;
 }

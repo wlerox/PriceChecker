@@ -20,7 +20,7 @@
   "playwrightUseEdge": null,
   "maxProductsPerStore": 1,
   "telegram": {
-    "enabled": true,
+    "enabled": false,
     "botToken": "8101161426:AAG1gV3alT08TvLg1HKXW9Wn3w1TC-mmilI",
     "chatId": "-5272619862",
     "cooldownMin": 15,

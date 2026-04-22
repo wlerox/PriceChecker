@@ -5,26 +5,41 @@ import { fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
-import { filterProductsByPriceRange, type PriceRange } from "../priceRange.ts";
+import {
+  filterProductsByPriceRange,
+  pageHasOnlyAboveMax,
+  shouldStopByCheapestRelevantAboveMax,
+  type PriceRange,
+} from "../priceRange.ts";
 
 const BASE = "https://www.pttavm.com";
 
-function productsFromJsonLd($: cheerio.CheerioAPI, max: number): Product[] {
+/** Ardışık boş sayfa toleransı: site geçici olarak boş HTML dönerse pes etmeden birkaç deneme. */
+const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
+
+/** `streamSearch` ile aynı ortam değişkeni ve varsayılan: sayfa döngüsü bu süre dolunca durur. */
+function pttavmBudgetMs(): number {
+  const raw = process.env.STREAM_PER_STORE_TIMEOUT_MS?.trim();
+  if (raw && raw !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  }
+  return 90_000;
+}
+
+function productsFromJsonLd($: cheerio.CheerioAPI): Product[] {
   const out: Product[] = [];
   $('script[type="application/ld+json"]').each((_, el) => {
-    if (out.length >= max) return false;
     try {
       const raw = $(el).html();
       if (!raw) return;
       const json = JSON.parse(raw) as unknown;
       const items = Array.isArray(json) ? json : [json];
       for (const node of items) {
-        if (out.length >= max) break;
         if (!node || typeof node !== "object") continue;
         const o = node as Record<string, unknown>;
         if (o["@type"] !== "ItemList" || !Array.isArray(o.itemListElement)) continue;
-        for (const it of o.itemListElement.slice(0, Math.min(20, max))) {
-          if (out.length >= max) break;
+        for (const it of o.itemListElement) {
           const li = it as Record<string, unknown>;
           const item = (li.item ?? li) as Record<string, unknown> | string;
           if (!item || typeof item !== "object") continue;
@@ -57,13 +72,12 @@ function productsFromJsonLd($: cheerio.CheerioAPI, max: number): Product[] {
   return out;
 }
 
-function productsFromCards(html: string, max: number): Product[] {
+function productsFromCards(html: string): Product[] {
   const $ = cheerio.load(html);
   const out: Product[] = [];
   const seen = new Set<string>();
 
   $('article.article__i36EQ a.card__dfYph[href*="-p-"]').each((_, el) => {
-    if (out.length >= max) return false;
     const a = $(el);
     let href = a.attr("href") ?? "";
     if (!href.includes("-p-")) return;
@@ -93,6 +107,37 @@ function productsFromCards(html: string, max: number): Product[] {
   return out;
 }
 
+function dedupeByUrl(items: Product[]): Product[] {
+  const seen = new Set<string>();
+  return items.filter((x) => {
+    if (seen.has(x.url)) return false;
+    seen.add(x.url);
+    return true;
+  });
+}
+
+async function fetchPttAvmPage(q: string, page: number): Promise<string> {
+  const params = page > 1 ? `&sayfa=${page}` : "";
+  const url = `${BASE}/arama?order=price_asc&q=${q}${params}`;
+  return fetchTextCurlThenPlaywright(
+    url,
+    { referer: `${BASE}/`, origin: BASE, useHttp11: true, timeoutSec: 35 },
+    {
+      referer: `${BASE}/`,
+      waitForAnySelectors: ['a[href*="-p-"]', 'script[type="application/ld+json"]'],
+      postLoadWaitMs: 600,
+    },
+    "PTT Avm"
+  );
+}
+
+function parsePage(html: string): Product[] {
+  const $ = cheerio.load(html);
+  const fromLd = productsFromJsonLd($);
+  if (fromLd.length > 0) return fromLd;
+  return productsFromCards(html);
+}
+
 export async function searchPttAvm(
   query: string,
   priceRange?: PriceRange,
@@ -101,31 +146,42 @@ export async function searchPttAvm(
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = encodeURIComponent(query.trim());
-  const url = `${BASE}/arama?order=price_asc&q=${q}`;
-  const html = await fetchTextCurlThenPlaywright(
-    url,
-    { referer: `${BASE}/`, origin: BASE, useHttp11: true, timeoutSec: 35 },
-    { referer: `${BASE}/`, waitForAnySelectors: ['a[href*="-p-"]', 'script[type="application/ld+json"]'], postLoadWaitMs: 600 },
-    "PTT Avm"
-  );
-  const $ = cheerio.load(html);
+  const merged: Product[] = [];
+  const budgetMs = pttavmBudgetMs();
+  const t0 = Date.now();
 
-  let out = productsFromJsonLd($, max);
-  if (out.length === 0) {
-    out = productsFromCards(html, max);
+  let pg = 0;
+  let consecutiveEmpty = 0;
+  while (true) {
+    if (Date.now() - t0 >= budgetMs) break;
+    pg += 1;
+
+    const html = await fetchPttAvmPage(q, pg);
+    const batch = parsePage(html);
+
+    if (batch.length === 0) {
+      consecutiveEmpty += 1;
+      const relevantSoFar = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
+      const inRangeSoFar = filterProductsByPriceRange(relevantSoFar, priceRange);
+      if (inRangeSoFar.length >= max) break;
+      if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
+      continue;
+    }
+    consecutiveEmpty = 0;
+
+    for (const p of batch) {
+      merged.push(p);
+    }
+
+    const relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
+    if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;
+    const inRange = filterProductsByPriceRange(relevant, priceRange);
+    if (inRange.length >= max) break;
+    if (pageHasOnlyAboveMax(batch, priceRange)) break;
   }
 
-  let relevant = filterProductsByQuery(query, dedupeByUrl(out), undefined, exactMatch, onlyNew);
+  const unique = dedupeByUrl(merged);
+  let relevant = filterProductsByQuery(query, unique, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
-  const fallback = filterProductsByPriceRange(dedupeByUrl(out), priceRange);
-  return takeCheapestProducts(relevant.length > 0 ? relevant : fallback, max);
-}
-
-function dedupeByUrl(items: Product[]): Product[] {
-  const seen = new Set<string>();
-  return items.filter((x) => {
-    if (seen.has(x.url)) return false;
-    seen.add(x.url);
-    return true;
-  });
+  return takeCheapestProducts(relevant, max);
 }

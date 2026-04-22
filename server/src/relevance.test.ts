@@ -33,6 +33,15 @@ test("rtx 5050 bitişik RTX5050 başlıkta eşleşir", () => {
   assert.ok(out[0].title.includes("5050"));
 });
 
+test("iphone 15 128 gb: başlıktaki 128GB bitişik yazımı eşleşir", () => {
+  const out = filterProductsByQuery("iphone 15 128 gb", [
+    p("Apple iPhone 15 128GB Siyah"),
+    p("Apple iPhone 15 256GB Siyah"),
+  ]);
+  assert.equal(out.length, 1);
+  assert.ok(out[0].title.includes("128GB"));
+});
+
 test("tek kelime", () => {
   const out = filterProductsByQuery("kulaklık", [p("Bluetooth kulaklık JBL"), p("Mouse kablosuz")]);
   assert.equal(out.length, 1);

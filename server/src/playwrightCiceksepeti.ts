@@ -1,10 +1,12 @@
 import type { Browser } from "playwright";
-import { getMaxProductsPerStore } from "./config/fetchConfig.ts";
 import {
   launchChromiumPreferInstalled,
   playwrightHeadless,
   tryLaunchInstalledChannel,
 } from "./playwrightLaunch.ts";
+
+/** Playwright tarafında sayfadan toplanacak maksimum kart sayısı (emniyet sınırı). */
+const HARD_EXTRACT_CAP = 200;
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -143,12 +145,14 @@ export type CiceksepetiScraped = { title: string; price: number; url: string };
 
 /**
  * Tek Playwright oturumu: her URL'yi dene, kademeli scroll ile ürün topla.
- * `max` ürün bulunursa hemen dön; bulunamazsa timeout'a kadar devam et.
+ * Sayfadaki tüm kartlar toplanır; sorgu/fiyat filtresi adapter tarafında uygulanır.
+ * Timeout ya da hedef adet (`targetItems`) dolduğunda durur.
  */
 export async function scrapeCiceksepetiListingPages(
-  listingUrls: string[]
+  listingUrls: string[],
+  targetItems = HARD_EXTRACT_CAP
 ): Promise<CiceksepetiScraped[]> {
-  const max = Math.max(1, getMaxProductsPerStore());
+  const target = Math.max(1, Math.min(HARD_EXTRACT_CAP, targetItems));
   const budget = budgetMs();
   const t0 = Date.now();
   const byUrl = new Map<string, CiceksepetiScraped>();
@@ -175,7 +179,7 @@ export async function scrapeCiceksepetiListingPages(
 
       for (const pageUrl of listingUrls) {
         if (Date.now() - t0 >= budget) break;
-        if (byUrl.size >= max) break;
+        if (byUrl.size >= target) break;
 
         await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
         await page.waitForLoadState("load", { timeout: 20000 }).catch(() => {});
@@ -194,11 +198,13 @@ export async function scrapeCiceksepetiListingPages(
 
         let scrollRound = 0;
         const maxScrollRounds = 12;
+        let prevSize = byUrl.size;
+        let stagnantRounds = 0;
 
         while (scrollRound < maxScrollRounds) {
           if (Date.now() - t0 >= budget) break;
 
-          const batch = (await page.evaluate(buildCiceksepetiExtractScript(max * 3))) as
+          const batch = (await page.evaluate(buildCiceksepetiExtractScript(HARD_EXTRACT_CAP))) as
             | CiceksepetiScraped[]
             | undefined;
 
@@ -208,16 +214,24 @@ export async function scrapeCiceksepetiListingPages(
             }
           }
 
-          if (byUrl.size >= max) break;
+          if (byUrl.size >= target) break;
+
+          if (byUrl.size === prevSize) {
+            stagnantRounds++;
+            if (stagnantRounds >= 3) break;
+          } else {
+            stagnantRounds = 0;
+          }
+          prevSize = byUrl.size;
 
           await page.evaluate(() =>
-            window.scrollBy(0, Math.min(700, Math.floor(window.innerHeight * 0.8)))
+            window.scrollBy(0, Math.min(900, Math.floor(window.innerHeight * 0.9)))
           );
           await delay(500);
           scrollRound++;
         }
 
-        if (byUrl.size >= max) break;
+        if (byUrl.size >= target) break;
       }
     } finally {
       await context.close();
@@ -228,13 +242,13 @@ export async function scrapeCiceksepetiListingPages(
 
   try {
     const ok = await run(browser);
-    if (ok && byUrl.size >= max) return [...byUrl.values()];
+    if (ok && byUrl.size >= target) return [...byUrl.values()];
   } finally {
     await browser.close();
   }
 
   if (
-    byUrl.size < max &&
+    byUrl.size < target &&
     Date.now() - t0 < budget &&
     process.env.PLAYWRIGHT_CICEK_RETRY_HEADED !== "0" &&
     wantHeadless
