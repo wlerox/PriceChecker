@@ -32,6 +32,13 @@ function parseExactMatchQuery(raw: string | string[] | undefined): boolean {
   return s === "1" || s === "true" || s === "yes" || s === "on";
 }
 
+function parseBooleanQuery(raw: string | string[] | undefined): boolean {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (value == null) return false;
+  const s = String(value).trim().toLocaleLowerCase("tr");
+  return s === "1" || s === "true" || s === "yes" || s === "on";
+}
+
 const PORT = Number(process.env.PORT) || 3001;
 
 const extraCorsOrigins = (process.env.CORS_ORIGINS ?? "")
@@ -107,6 +114,7 @@ export function createApp(deps: SearchDeps = {}) {
     const searchTypeRaw = typeof req.query.type === "string" ? req.query.type.trim() : "";
     const searchType = searchTypeRaw.length > 0 ? searchTypeRaw : undefined;
     const exactMatch = parseExactMatchQuery(req.query.exactMatch as string | string[] | undefined);
+    const onlyNew = parseBooleanQuery(req.query.onlyNew as string | string[] | undefined);
     const onlyStores = parseStoresQuery(req.query.stores as string | string[] | undefined);
     const priceRangeResult = parsePriceRangeFromQuery(
       typeof req.query.priceMin === "string" ? req.query.priceMin : undefined,
@@ -140,7 +148,7 @@ export function createApp(deps: SearchDeps = {}) {
         }
       });
 
-      let relevant = applyRelevanceFilters(q, searchType, results, exactMatch);
+      let relevant = applyRelevanceFilters(q, searchType, results, exactMatch, onlyNew);
       relevant = filterProductsByPriceRange(relevant, priceRange);
       relevant = sortProductsByPriceAsc(relevant);
 
@@ -181,6 +189,7 @@ export function createApp(deps: SearchDeps = {}) {
     const searchTypeRaw = typeof req.query.type === "string" ? req.query.type.trim() : "";
     const searchType = searchTypeRaw.length > 0 ? searchTypeRaw : undefined;
     const exactMatch = parseExactMatchQuery(req.query.exactMatch as string | string[] | undefined);
+    const onlyNew = parseBooleanQuery(req.query.onlyNew as string | string[] | undefined);
     const onlyStores = parseStoresQuery(req.query.stores as string | string[] | undefined);
     const priceRangeResult = parsePriceRangeFromQuery(
       typeof req.query.priceMin === "string" ? req.query.priceMin : undefined,
@@ -199,7 +208,7 @@ export function createApp(deps: SearchDeps = {}) {
         return;
       }
       const summary = await runWithRelevanceLoggingAsync(jobs.length === 1, () =>
-        writeSearchNdjsonStream(res, q, searchType, jobs, priceRange, exactMatch),
+        writeSearchNdjsonStream(res, q, searchType, jobs, priceRange, exactMatch, onlyNew),
       );
       if (summary.relevantProducts.length > 0) {
         const allSorted = sortProductsByPriceAsc(summary.relevantProducts);

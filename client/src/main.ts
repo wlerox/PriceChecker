@@ -205,10 +205,16 @@ app.innerHTML = `
         <option value="price-desc">Fiyat: Büyükten düşüğe</option>
         <option value="default">Fiyat: Varsayılan</option>
       </select>
-      <label class="check-row search-exact-row" title="Açıkken sorgu başlıkta bitişik/sıkı eşleşir">
-        <input type="checkbox" id="exact-match" />
-        <span>Tam eşleşme</span>
-      </label>
+      <div class="search-flags-row">
+        <label class="check-row" title="Açıkken sorgu başlıkta bitişik/sıkı eşleşir">
+          <input type="checkbox" id="exact-match" />
+          <span>Tam eşleşme</span>
+        </label>
+        <label class="check-row" title="Yenilenmiş, teşhir, sıfırdan farksız gibi ifadeleri içeren başlıklar elenir">
+          <input type="checkbox" id="only-new" />
+          <span>Sadece sıfır cihazlar</span>
+        </label>
+      </div>
       <button type="submit" id="btn">Ara</button>
     </form>
 
@@ -253,6 +259,7 @@ const priceMinEl = document.getElementById("price-min") as HTMLInputElement;
 const priceMaxEl = document.getElementById("price-max") as HTMLInputElement;
 const sortByEl = document.getElementById("sort-by") as HTMLSelectElement;
 const exactMatchEl = document.getElementById("exact-match") as HTMLInputElement;
+const onlyNewEl = document.getElementById("only-new") as HTMLInputElement;
 const titleFilterEl = document.getElementById("title-filter") as HTMLInputElement | null;
 const onlyCheapestEl = document.getElementById("only-cheapest") as HTMLInputElement | null;
 const filterResetBtn = document.getElementById("filter-reset") as HTMLButtonElement;
@@ -520,6 +527,7 @@ function resetFilters(): void {
   priceMaxEl.value = "";
   sortByEl.value = "price-asc";
   exactMatchEl.checked = false;
+  onlyNewEl.checked = false;
   if (titleFilterEl) titleFilterEl.value = "";
   if (onlyCheapestEl) onlyCheapestEl.checked = false;
   if (rawResults.length) renderTable();
@@ -591,6 +599,7 @@ form.addEventListener("submit", async (e) => {
     const params = new URLSearchParams({ q });
     if (typeRaw !== undefined && typeRaw !== "") params.set("type", typeRaw);
     if (exactMatchEl.checked) params.set("exactMatch", "1");
+    if (onlyNewEl.checked) params.set("onlyNew", "1");
     params.set("stores", selectedStores.join(","));
     if (priceMinEl.value.trim() !== "") params.set("priceMin", priceMinEl.value.trim());
     if (priceMaxEl.value.trim() !== "") params.set("priceMax", priceMaxEl.value.trim());

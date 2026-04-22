@@ -135,20 +135,65 @@ export function filterProductsBySearchType(searchType: string | undefined, produ
   return products;
 }
 
+/** "Sadece sıfır" filtresi açıkken elenen başlık anahtar ifadeleri (foldForMatch normalize edilmiş). */
+const NON_NEW_TITLE_NEEDLES: readonly string[] = [
+  "yenilenmiş",
+  "yenilenmis",
+  "yenilenme",
+  "refurbished",
+  "teşhir",
+  "teshir",
+  "sıfırdan farksız",
+  "sifirdan farksiz",
+  "ikinci el",
+  "2.el",
+  "2 el",
+  "kullanılmış",
+  "kullanilmis",
+  "açık kutu",
+  "acik kutu",
+  "outlet",
+  "iade",
+].map(foldForMatch);
+
+/** Başlık "yenilenmiş / teşhir / sıfırdan farksız" vb. ifade içeriyorsa elenir. */
+export function isNonNewTitle(title: string): boolean {
+  const folded = foldForMatch(title);
+  for (const needle of NON_NEW_TITLE_NEEDLES) {
+    if (folded.includes(needle)) return true;
+  }
+  return false;
+}
+
+export function filterOutNonNewProducts(products: Product[]): Product[] {
+  return products.filter((p) => {
+    const drop = isNonNewTitle(p.title);
+    if (drop && isRelevanceLoggingEnabled()) {
+      console.info(
+        `[relevance] ✗ sıfır-değil elendi: [${p.store}] "${p.title.slice(0, 80)}"`,
+      );
+    }
+    return !drop;
+  });
+}
+
 /**
  * Önce sorgu terimleri, sonra isteğe bağlı alt kategori süzgeci.
  * Sorgu hiçbir satırla eşleşmezse boş döner (alakasız ürün göstermez).
  * Kategori süzgeci tek başına her şeyi silerse yalnızca sorguyla eşleşenler kalır.
+ * `onlyNew` açıksa "yenilenmiş / teşhir / sıfırdan farksız" vb. içeren başlıklar elenir.
  */
 export function applyRelevanceFilters(
   query: string,
   searchType: string | undefined,
   products: Product[],
   exactMatch = false,
+  onlyNew = false,
 ): Product[] {
   if (products.length === 0) return [];
   let relevant = filterProductsByQuery(query, products, undefined, exactMatch);
   relevant = filterProductsBySearchType(searchType, relevant);
+  if (onlyNew) relevant = filterOutNonNewProducts(relevant);
   return relevant;
 }
 

@@ -31,6 +31,7 @@ export async function writeSearchNdjsonStream(
   jobs: StoreJob[],
   priceRange?: PriceRange,
   exactMatch = false,
+  onlyNew = false,
 ): Promise<StreamSearchSummary> {
   res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache");
@@ -63,7 +64,7 @@ export async function writeSearchNdjsonStream(
     pending.delete(winner.name);
 
     if (winner.v.ok) {
-      let relevant = applyRelevanceFilters(query, searchType, winner.v.products, exactMatch);
+      let relevant = applyRelevanceFilters(query, searchType, winner.v.products, exactMatch, onlyNew);
       relevant = filterProductsByPriceRange(relevant, priceRange);
       relevant = sortProductsByPriceAsc(relevant);
       relevantProducts.push(...relevant);
