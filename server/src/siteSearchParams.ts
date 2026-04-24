@@ -276,7 +276,10 @@ export const SITE_SEARCH_PARAMS = {
   "Çiçeksepeti": {
     base: "https://www.ciceksepeti.com",
     searchPathTemplate: "/arama?qt={Q}&query={Q}",
-    pageParamTemplate: "sayfa={N}",
+    // Not: Site hem /arama hem de /d/ kategori yolunda sayfalamayı `page=N`
+    // ile yapıyor; `sayfa=N` parametresi kabul edilmeyip sayfa 1'in aynısını
+    // döndürüyor. Eski şablondan dolayı pagination çalışmıyordu.
+    pageParamTemplate: "page={N}",
     sort: {
       // Çiçeksepeti'de sort filtresi site arayüzünde "choice=1" bayrağı ile birlikte
       // URL'e eklenir; `orderby` tek başına çoğu listeleme yolunda yok sayılıyor ve

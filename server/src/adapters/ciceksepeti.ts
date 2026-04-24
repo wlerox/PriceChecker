@@ -123,7 +123,10 @@ function buildPageUrl(
   }
   const priceParam = buildPriceRangeParam(priceRange);
   if (priceParam) url = append(url, priceParam);
-  if (page > 1) url = append(url, `sayfa=${page}`);
+  // Not: Çiçeksepeti'nin güncel site'ı hem `/arama?qt=…` hem `/d/…` kategori
+  // yolunda sayfalamayı `?page=N` ile yapıyor; eski `sayfa=N` parametresi
+  // sessizce yok sayılıp sayfa 1'in aynısı dönüyor (sonsuz döngü nedeniydi).
+  if (page > 1) url = append(url, `page=${page}`);
   return url;
 }
 
