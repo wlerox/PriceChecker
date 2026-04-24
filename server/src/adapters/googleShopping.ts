@@ -3,11 +3,12 @@ import type { Product } from "../../../shared/types.ts";
 import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchConfig.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
-import { takeCheapestProducts } from "../sortProducts.ts";
 import {
   filterProductsByPriceRange,
   type PriceRange,
 } from "../priceRange.ts";
+import type { SortMode } from "../sortMode.ts";
+import { finalizeProductsForSort } from "../adapterHelpers.ts";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -218,11 +219,14 @@ export async function searchGoogleShopping(
   priceRange?: PriceRange,
   exactMatch = false,
   onlyNew = false,
+  sort: SortMode = "price-asc",
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
+  // Not: Google Alışveriş URL'sinde fiyat aralığı/sort parametreleri `tbs=...` ile birleşik
+  // gelir; mevcut akış client-side filtrelemeye güveniyor. Sort'u son adımda uygularız.
   const raw = await fetchGoogleShoppingProducts(query, { max, priceRange, exactMatch, onlyNew });
 
   let relevant = filterProductsByQuery(query, raw, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
-  return takeCheapestProducts(relevant, max);
+  return finalizeProductsForSort(relevant, max, sort);
 }

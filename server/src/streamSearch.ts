@@ -1,10 +1,20 @@
 import type { Response } from "express";
 import type { Product } from "../../shared/types.ts";
-import { sortProductsByPriceAsc } from "./sortProducts.ts";
+import {
+  sortProductsByPriceAsc,
+  sortProductsByPriceDesc,
+} from "./sortProducts.ts";
 import { applyRelevanceFilters } from "./relevance.ts";
 import type { StoreJob } from "./storeJobs.ts";
 import { filterProductsByPriceRange, type PriceRange } from "./priceRange.ts";
 import { getPerStoreTimeoutMs } from "./config/fetchConfig.ts";
+import type { SortMode } from "./sortMode.ts";
+
+function sortForMode(products: Product[], sort: SortMode): Product[] {
+  if (sort === "price-desc") return sortProductsByPriceDesc(products);
+  if (sort === "relevance") return [...products];
+  return sortProductsByPriceAsc(products);
+}
 
 type StreamLineStore = { type: "store"; store: string; products: Product[] };
 type StreamLineError = { type: "error"; store: string; message: string };
@@ -33,6 +43,7 @@ export async function writeSearchNdjsonStream(
   priceRange?: PriceRange,
   exactMatch = false,
   onlyNew = false,
+  sort: SortMode = "price-asc",
 ): Promise<StreamSearchSummary> {
   res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache");
@@ -71,7 +82,7 @@ export async function writeSearchNdjsonStream(
     if (winner.v.ok) {
       let relevant = applyRelevanceFilters(query, searchType, winner.v.products, exactMatch, onlyNew);
       relevant = filterProductsByPriceRange(relevant, priceRange);
-      relevant = sortProductsByPriceAsc(relevant);
+      relevant = sortForMode(relevant, sort);
       relevantProducts.push(...relevant);
       const line: StreamLineStore = { type: "store", store: winner.name, products: relevant };
       res.write(JSON.stringify(line) + "\n");

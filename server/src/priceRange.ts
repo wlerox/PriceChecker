@@ -53,10 +53,22 @@ export function isAboveMax(price: number, range: PriceRange | undefined): boolea
   return price > range.max;
 }
 
+export function isBelowMin(price: number, range: PriceRange | undefined): boolean {
+  if (!Number.isFinite(price)) return false;
+  if (!range || range.min == null) return false;
+  return price < range.min;
+}
+
 /** Artan fiyat sıralaması garantili sayfalarda erken kesme için. */
 export function pageHasOnlyAboveMax(items: Product[], range: PriceRange | undefined): boolean {
   if (!range || range.max == null || items.length === 0) return false;
   return items.every((p) => isAboveMax(p.price, range));
+}
+
+/** Azalan fiyat sıralaması garantili sayfalarda erken kesme için. */
+export function pageHasOnlyBelowMin(items: Product[], range: PriceRange | undefined): boolean {
+  if (!range || range.min == null || items.length === 0) return false;
+  return items.every((p) => isBelowMin(p.price, range));
 }
 
 export function cheapestProductPrice(items: Product[]): number | undefined {
@@ -70,6 +82,17 @@ export function cheapestProductPrice(items: Product[]): number | undefined {
   return Number.isFinite(min) ? min : undefined;
 }
 
+export function mostExpensiveProductPrice(items: Product[]): number | undefined {
+  if (items.length === 0) return undefined;
+  let max = Number.NEGATIVE_INFINITY;
+  for (const item of items) {
+    if (Number.isFinite(item.price) && item.price > max) {
+      max = item.price;
+    }
+  }
+  return Number.isFinite(max) ? max : undefined;
+}
+
 /** Artan fiyat akışında, en ucuz ilgili ürün bile üst limiti aştıysa sayfalama durur. */
 export function shouldStopByCheapestRelevantAboveMax(
   relevantItems: Product[],
@@ -79,6 +102,17 @@ export function shouldStopByCheapestRelevantAboveMax(
   const cheapest = cheapestProductPrice(relevantItems);
   if (cheapest == null) return false;
   return cheapest > range.max;
+}
+
+/** Azalan fiyat akışında, en pahalı ilgili ürün bile alt sınırın altındaysa sayfalama durur. */
+export function shouldStopByMostExpensiveRelevantBelowMin(
+  relevantItems: Product[],
+  range: PriceRange | undefined,
+): boolean {
+  if (!range || range.min == null) return false;
+  const mostExpensive = mostExpensiveProductPrice(relevantItems);
+  if (mostExpensive == null) return false;
+  return mostExpensive < range.min;
 }
 
 export function filterProductsByPriceRange(items: Product[], range: PriceRange | undefined): Product[] {

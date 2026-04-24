@@ -14,7 +14,9 @@ import { searchKoctas } from "./adapters/koctas.ts";
 import { searchCimri } from "./adapters/cimri.ts";
 import { searchAkakce } from "./adapters/akakce.ts";
 import { searchGoogleShopping } from "./adapters/googleShopping.ts";
+import { searchEpey } from "./adapters/epey.ts";
 import type { PriceRange } from "./priceRange.ts";
+import type { SortMode } from "./sortMode.ts";
 
 export type StoreJob = { name: string; fn: () => Promise<Product[]> };
 
@@ -34,6 +36,7 @@ export const KNOWN_STORE_NAMES = [
   "Koçtaş",
   "Cimri",
   "Akakçe",
+  "Epey",
   "Google Alışveriş",
 ] as const;
 
@@ -49,23 +52,25 @@ export function createStoreJobs(
   priceRange?: PriceRange,
   exactMatch = false,
   onlyNew = false,
+  sort: SortMode = "price-asc",
 ): StoreJob[] {
   const all: StoreJob[] = [
-    { name: "Trendyol", fn: () => searchTrendyol(q, priceRange, exactMatch, onlyNew) },
-    { name: "Hepsiburada", fn: () => searchHepsiburada(q, priceRange, exactMatch, onlyNew) },
-    { name: "Amazon TR", fn: () => searchAmazonTr(q, priceRange, exactMatch, onlyNew) },
-    { name: "N11", fn: () => searchN11(q, priceRange, exactMatch, onlyNew) },
-    { name: "Pazarama", fn: () => searchPazarama(q, priceRange, exactMatch, onlyNew) },
-    { name: "İdefix", fn: () => searchIdefix(q, priceRange, exactMatch, onlyNew) },
-    { name: "Vatan", fn: () => searchVatan(q, searchType, priceRange, exactMatch, onlyNew) },
-    { name: "PTT Avm", fn: () => searchPttAvm(q, priceRange, exactMatch, onlyNew) },
-    { name: "MediaMarkt", fn: () => searchMediaMarkt(q, priceRange, exactMatch, onlyNew) },
-    { name: "Çiçeksepeti", fn: () => searchCiceksepeti(q, priceRange, exactMatch, onlyNew) },
-    { name: "Teknosa", fn: () => searchTeknosa(q, priceRange, exactMatch, onlyNew) },
-    { name: "Koçtaş", fn: () => searchKoctas(q, priceRange, exactMatch, onlyNew) },
-    { name: "Cimri", fn: () => searchCimri(q, priceRange, exactMatch, onlyNew) },
-    { name: "Akakçe", fn: () => searchAkakce(q, priceRange, exactMatch, onlyNew) },
-    { name: "Google Alışveriş", fn: () => searchGoogleShopping(q, priceRange, exactMatch, onlyNew) },
+    { name: "Trendyol", fn: () => searchTrendyol(q, priceRange, exactMatch, onlyNew, sort) },
+    { name: "Hepsiburada", fn: () => searchHepsiburada(q, priceRange, exactMatch, onlyNew, sort) },
+    { name: "Amazon TR", fn: () => searchAmazonTr(q, priceRange, exactMatch, onlyNew, sort) },
+    { name: "N11", fn: () => searchN11(q, priceRange, exactMatch, onlyNew, sort) },
+    { name: "Pazarama", fn: () => searchPazarama(q, priceRange, exactMatch, onlyNew, sort) },
+    { name: "İdefix", fn: () => searchIdefix(q, priceRange, exactMatch, onlyNew, sort) },
+    { name: "Vatan", fn: () => searchVatan(q, searchType, priceRange, exactMatch, onlyNew, sort) },
+    { name: "PTT Avm", fn: () => searchPttAvm(q, priceRange, exactMatch, onlyNew, sort) },
+    { name: "MediaMarkt", fn: () => searchMediaMarkt(q, priceRange, exactMatch, onlyNew, sort) },
+    { name: "Çiçeksepeti", fn: () => searchCiceksepeti(q, priceRange, exactMatch, onlyNew, sort) },
+    { name: "Teknosa", fn: () => searchTeknosa(q, priceRange, exactMatch, onlyNew, sort) },
+    { name: "Koçtaş", fn: () => searchKoctas(q, priceRange, exactMatch, onlyNew, sort) },
+    { name: "Cimri", fn: () => searchCimri(q, priceRange, exactMatch, onlyNew, sort) },
+    { name: "Akakçe", fn: () => searchAkakce(q, priceRange, exactMatch, onlyNew, sort) },
+    { name: "Epey", fn: () => searchEpey(q, priceRange, exactMatch, onlyNew, sort) },
+    { name: "Google Alışveriş", fn: () => searchGoogleShopping(q, priceRange, exactMatch, onlyNew, sort) },
   ];
 
   if (!onlyStores?.length) return all;

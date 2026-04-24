@@ -1,0 +1,17 @@
+site,baseUrl,searchPathTemplate,     pageParam,   sort_priceAsc,  sort_priceDesc,   sort_relevance,  priceMinParam,   priceMaxParam,   priceRangeCombinedParam   ,notes
+Trendyol,https://www.trendyol.com,/sr?q={Q},pi={N},sst=PRICE_BY_ASC,sst=PRICE_BY_DESC,,prc=100-*,prc=0-100,prc=50-100, yok
+Hepsiburada,https://www.hepsiburada.com,/ara?q={Q},sayfa={N},siralama=artanfiyat,siralama=azalanfiyat,,filtreler=fiyat:min-100,filtreler=fiyat:50-max,filtreler=fiyat:50-100,
+Amazon TR,https://www.amazon.com.tr,/s?k={Q},page={N},s=price-asc-rank,s=price-desc-rank,,low-price=13400,high-price=49500,low-price=13400&high-price=49500, sayfa arttıgında sayfaya göre ref=sr_pg_{N} parametresi ekleniyor
+N11,https://www.n11.com,/arama?q={Q},pg={N},srt=PRICE_LOW,srt=PRICE_HIGH,,minp=50,maxp=100,minp=50&maxp=100,
+Pazarama,https://www.pazarama.com,/arama?q={Q},sayfa={N},siralama=artan-fiyat,siralama=azalan-fiyat,,fiyat=50-max,fiyat=min-100,fiyat=50-100,
+İdefix,https://www.idefix.com,/arama?q={Q},sayfa={N},siralama=asc_price,siralama=desc_price,,fiyat=50-,fiyat=50-100,fiyat=-100,
+Vatan,https://www.vatanbilgisayar.com,/arama/{KEYWORD}/,page={N},srt=UP,srt=PU,,min=50&max=,min=&max=100,min=50&max=100,Path tabanlı; min/max fiyat segment ya da query olabilir
+PTT Avm,https://www.pttavm.com,/arama?q={Q},page={N},order=price_asc,order=price_desc,,min_price=50,max_price=100,min_price=50&max_price=100,
+MediaMarkt,https://www.mediamarkt.com.tr,/tr/search.html?query={Q},page={N},sort=currentprice+asc,sort=currentprice+desc,,currentprice=100.0-100000.0,currentprice=1.0-10000.0,currentprice=1000.0-100000.0, burada fiyata göre sıralamada en az fiyat verildiğinde en yüksekte olmak durumunda yani fiyat yazıldıgında max fiyatı kendi koyuyor normalde 1tl fazlasını bunu beraber düzelticez
+Çiçeksepeti,https://www.ciceksepeti.com,/arama?qt={Q}&query={Q},page={N},orderby=3,orderby=2,,prc=50-*,prc=0-100,prc=50-100,
+Teknosa,https://www.teknosa.com,/arama?s={Q},page={N},sort=price-asc,sort=price-desc,,priceValue%3A50-max,priceValue%3Amin-100,priceValue%3A50-100,
+Koçtaş,https://www.koctas.com.tr,/search?q={Q}&sp={Q},page={N},:price-asc,:price-desc,,:priceValue:50-max,:priceValue:min-100,:priceValue:50-100,
+Cimri,https://www.cimri.com,/arama?q={Q},page={N},sort=price%2Casc,sort=price%2Cdesc,,minPrice=50,maxPrice=100,minPrice=50&maxPrice=100,
+Akakçe,https://www.akakce.com,/arama/?q={Q},p={N},s=2,s=4,,p1=50,p2=100,p1=50&p2=100,
+Epey,https://www.epey.com/,/4/,fiyat:DESC,fiyat:ASC,,,,,  Burada php seriliazion kullanılmış tam parametreleri çıkartamadım en son bunu düzeltecegiz.
+Google Alışveriş,https://www.google.com.tr,/search?q={Q}&udm=28&hl=tr&gl=tr,,,,,,,,tbs=mr:1,price:1,ppr_min:{MIN},ppr_max:{MAX} gibi birleşik parametre kullanılır

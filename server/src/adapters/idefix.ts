@@ -6,10 +6,15 @@ import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import {
   filterProductsByPriceRange,
-  pageHasOnlyAboveMax,
-  shouldStopByCheapestRelevantAboveMax,
   type PriceRange,
 } from "../priceRange.ts";
+import type { SortMode } from "../sortMode.ts";
+import { SITE_SEARCH_PARAMS, buildStoreSearchUrl } from "../siteSearchParams.ts";
+import {
+  finalizeProductsForSort,
+  pageAllOutsideRange,
+  shouldStopBySortOrderedRange,
+} from "../adapterHelpers.ts";
 
 const BASE = "https://www.idefix.com";
 
@@ -65,9 +70,9 @@ export async function searchIdefix(
   priceRange?: PriceRange,
   exactMatch = false,
   onlyNew = false,
+  sort: SortMode = "price-asc",
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
-  const q = encodeURIComponent(query.trim());
   const merged: Product[] = [];
   const budgetMs = getPerStoreTimeoutMs();
   const t0 = Date.now();
@@ -79,7 +84,12 @@ export async function searchIdefix(
     if (Date.now() - t0 >= budgetMs) break;
     pg += 1;
 
-    const url = `${BASE}/arama?q=${q}&siralama=asc_price&sayfa=${pg}`;
+    const url = buildStoreSearchUrl(SITE_SEARCH_PARAMS["İdefix"], {
+      query,
+      page: pg,
+      sort,
+      priceRange,
+    });
     const html = await fetchTextCurlThenPlaywright(
       url,
       { referer: `${BASE}/`, origin: BASE, useHttp11: true, timeoutSec: 35 },
@@ -106,15 +116,14 @@ export async function searchIdefix(
     }
 
     const relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
-    if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;
+    if (shouldStopBySortOrderedRange(relevant, priceRange, sort)) break;
     const inRange = filterProductsByPriceRange(relevant, priceRange);
     if (inRange.length >= max) break;
-    if (pageHasOnlyAboveMax(page, priceRange)) break;
+    if (pageAllOutsideRange(page, priceRange, sort)) break;
   }
 
   const unique = dedupeByUrl(merged);
   let relevant = filterProductsByQuery(query, unique, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
-  relevant.sort((a, b) => a.price - b.price);
-  return relevant.slice(0, max);
+  return finalizeProductsForSort(relevant, max, sort);
 }

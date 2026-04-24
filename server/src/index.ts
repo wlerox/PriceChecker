@@ -3,13 +3,23 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import { pathToFileURL } from "node:url";
 import type { Product, SearchResponse } from "../../shared/types.ts";
-import { sortProductsByPriceAsc } from "./sortProducts.ts";
+import {
+  sortProductsByPriceAsc,
+  sortProductsByPriceDesc,
+} from "./sortProducts.ts";
 import { applyRelevanceFilters } from "./relevance.ts";
 import { runWithRelevanceLoggingAsync } from "./relevanceLoggingContext.ts";
 import { createStoreJobs, type StoreJob } from "./storeJobs.ts";
 import { writeSearchNdjsonStream } from "./streamSearch.ts";
 import { filterProductsByPriceRange, parsePriceRangeFromQuery } from "./priceRange.ts";
+import { parseSortModeFromQuery, type SortMode } from "./sortMode.ts";
 import { sendBestPriceTelegramMessage } from "./services/telegramNotifier.ts";
+
+function applyFinalSort(products: Product[], sort: SortMode): Product[] {
+  if (sort === "price-desc") return sortProductsByPriceDesc(products);
+  if (sort === "relevance") return [...products];
+  return sortProductsByPriceAsc(products);
+}
 
 function parseStoresQuery(raw: string | string[] | undefined): string[] | undefined {
   if (raw == null) return undefined;
@@ -67,6 +77,7 @@ type SearchDeps = {
     priceRange?: { min?: number; max?: number },
     exactMatch?: boolean,
     onlyNew?: boolean,
+    sort?: SortMode,
   ) => StoreJob[];
   notifyBestPriceFn?: typeof sendBestPriceTelegramMessage;
 };
@@ -126,7 +137,8 @@ export function createApp(deps: SearchDeps = {}) {
       return;
     }
     const priceRange = priceRangeResult.range;
-    const jobs = createStoreJobsFn(q, searchType, onlyStores, priceRange, exactMatch, onlyNew);
+    const sort = parseSortModeFromQuery(req.query.sort as string | string[] | undefined);
+    const jobs = createStoreJobsFn(q, searchType, onlyStores, priceRange, exactMatch, onlyNew, sort);
     if (jobs.length === 0) {
       res.status(400).json({ error: "En az bir geçerli mağaza seçin (stores parametresi)." });
       return;
@@ -151,10 +163,12 @@ export function createApp(deps: SearchDeps = {}) {
 
       let relevant = applyRelevanceFilters(q, searchType, results, exactMatch, onlyNew);
       relevant = filterProductsByPriceRange(relevant, priceRange);
-      relevant = sortProductsByPriceAsc(relevant);
+      relevant = applyFinalSort(relevant, sort);
 
       if (relevant.length > 0) {
-        const best = relevant[0];
+        // Telegram bildirimi her zaman "en ucuz ürün" üzerinden kurulur; sort ne olursa olsun
+        // bildirim için artan fiyata göre ilk öğeyi seçiyoruz.
+        const best = sort === "price-asc" ? relevant[0] : sortProductsByPriceAsc(relevant)[0];
         try {
           await notifyBestPriceFn({
             query: q,
@@ -201,15 +215,16 @@ export function createApp(deps: SearchDeps = {}) {
       return;
     }
     const priceRange = priceRangeResult.range;
+    const sort = parseSortModeFromQuery(req.query.sort as string | string[] | undefined);
 
     try {
-      const jobs = createStoreJobsFn(q, searchType, onlyStores, priceRange, exactMatch, onlyNew);
+      const jobs = createStoreJobsFn(q, searchType, onlyStores, priceRange, exactMatch, onlyNew, sort);
       if (jobs.length === 0) {
         res.status(400).json({ error: "En az bir geçerli mağaza seçin (stores parametresi)." });
         return;
       }
       const summary = await runWithRelevanceLoggingAsync(jobs.length === 1, () =>
-        writeSearchNdjsonStream(res, q, searchType, jobs, priceRange, exactMatch, onlyNew),
+        writeSearchNdjsonStream(res, q, searchType, jobs, priceRange, exactMatch, onlyNew, sort),
       );
       if (summary.relevantProducts.length > 0) {
         const allSorted = sortProductsByPriceAsc(summary.relevantProducts);

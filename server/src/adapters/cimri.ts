@@ -4,13 +4,17 @@ import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchCon
 import { createFetchSession, fetchTextCurlThenPlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
-import { takeCheapestProducts } from "../sortProducts.ts";
 import {
   filterProductsByPriceRange,
-  pageHasOnlyAboveMax,
-  shouldStopByCheapestRelevantAboveMax,
   type PriceRange,
 } from "../priceRange.ts";
+import type { SortMode } from "../sortMode.ts";
+import { SITE_SEARCH_PARAMS, buildStoreSearchUrl } from "../siteSearchParams.ts";
+import {
+  finalizeProductsForSort,
+  pageAllOutsideRange,
+  shouldStopBySortOrderedRange,
+} from "../adapterHelpers.ts";
 
 const BASE = "https://www.cimri.com";
 const PER_PAGE_CAP = 42;
@@ -170,9 +174,9 @@ export async function searchCimri(
   priceRange?: PriceRange,
   exactMatch = false,
   onlyNew = false,
+  sort: SortMode = "price-asc",
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
-  const q = encodeURIComponent(query.trim());
   const budgetMs = getPerStoreTimeoutMs();
   const t0 = Date.now();
   const merged: Product[] = [];
@@ -182,7 +186,12 @@ export async function searchCimri(
   for (let pg = 1; ; pg++) {
     if (Date.now() - t0 >= budgetMs) break;
 
-    const url = `${BASE}/arama?q=${q}&sort=price,asc&page=${pg}`;
+    const url = buildStoreSearchUrl(SITE_SEARCH_PARAMS.Cimri, {
+      query,
+      page: pg,
+      sort,
+      priceRange,
+    });
     const html = await fetchTextCurlThenPlaywright(
       url,
       { referer: `${BASE}/`, origin: BASE, useHttp11: true, timeoutSec: 30 },
@@ -228,13 +237,13 @@ export async function searchCimri(
     for (const p of page) merged.push(p);
 
     const relevantSoFar = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
-    if (shouldStopByCheapestRelevantAboveMax(relevantSoFar, priceRange)) break;
+    if (shouldStopBySortOrderedRange(relevantSoFar, priceRange, sort)) break;
     const inRange = filterProductsByPriceRange(relevantSoFar, priceRange);
     if (inRange.length >= max) break;
-    if (pageHasOnlyAboveMax(page, priceRange)) break;
+    if (pageAllOutsideRange(page, priceRange, sort)) break;
   }
 
   let relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
-  return takeCheapestProducts(relevant, max);
+  return finalizeProductsForSort(relevant, max, sort);
 }

@@ -28,6 +28,7 @@ const STORE_OPTIONS = [
   "Koçtaş",
   "Cimri",
   "Akakçe",
+  "Epey",
   "Google Alışveriş",
 ] as const;
 
@@ -108,7 +109,7 @@ app.innerHTML = `
   <main class="layout">
     <header class="header">
       <h1>TR fiyat karşılaştırma</h1>
-      <p class="sub">Trendyol, Hepsiburada, Amazon TR, N11, Pazarama, İdefix, Vatan, PTT Avm, MediaMarkt, Çiçeksepeti, Teknosa, Koçtaş, Cimri, Akakçe, Google Alışveriş — yerelde çalışır, veri saklanmaz.</p>
+      <p class="sub">Trendyol, Hepsiburada, Amazon TR, N11, Pazarama, İdefix, Vatan, PTT Avm, MediaMarkt, Çiçeksepeti, Teknosa, Koçtaş, Cimri, Akakçe, Epey, Google Alışveriş — yerelde çalışır, veri saklanmaz.</p>
     </header>
 
     <aside class="filters filters--bar" id="filters" aria-label="Filtreler">
@@ -203,7 +204,7 @@ app.innerHTML = `
       <select id="sort-by" aria-label="Sonuç sıralaması">
         <option value="price-asc" selected>Fiyat: Düşükten yükseğe</option>
         <option value="price-desc">Fiyat: Büyükten düşüğe</option>
-        <option value="default">Fiyat: Varsayılan</option>
+        <option value="default">Önerilen (site varsayılanı)</option>
       </select>
       <div class="search-flags-row">
         <label class="check-row" title="Açıkken sorgu başlıkta bitişik/sıkı eşleşir">
@@ -603,6 +604,10 @@ form.addEventListener("submit", async (e) => {
     params.set("stores", selectedStores.join(","));
     if (priceMinEl.value.trim() !== "") params.set("priceMin", priceMinEl.value.trim());
     if (priceMaxEl.value.trim() !== "") params.set("priceMax", priceMaxEl.value.trim());
+    // Sunucu tarafı sort: "default" → "relevance" (API sözleşmesi)
+    const sortUi = getSort();
+    const sortApi = sortUi === "default" ? "relevance" : sortUi;
+    params.set("sort", sortApi);
     const res = await fetch(apiUrl(`/api/search/stream?${params.toString()}`));
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

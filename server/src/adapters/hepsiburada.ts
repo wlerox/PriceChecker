@@ -11,9 +11,14 @@ import { filterProductsByQuery } from "../relevance.ts";
 import { takeCheapestProducts } from "../sortProducts.ts";
 import {
   filterProductsByPriceRange,
-  shouldStopByCheapestRelevantAboveMax,
   type PriceRange,
 } from "../priceRange.ts";
+import type { SortMode } from "../sortMode.ts";
+import { SITE_SEARCH_PARAMS, buildStoreSearchUrl } from "../siteSearchParams.ts";
+import {
+  finalizeProductsForSort,
+  shouldStopBySortOrderedRange,
+} from "../adapterHelpers.ts";
 
 const BASE = "https://www.hepsiburada.com";
 
@@ -33,12 +38,15 @@ async function fetchSearchHtml(
   query: string,
   page = 1,
   hbSession?: HepsiburadaPlaywrightSession,
+  sort: SortMode = "price-asc",
+  priceRange?: PriceRange,
 ): Promise<string> {
-  const q = encodeURIComponent(query.trim());
-  const searchUrl =
-    page <= 1
-      ? `${BASE}/ara?q=${q}&siralama=artanfiyat`
-      : `${BASE}/ara?q=${q}&siralama=artanfiyat&sayfa=${page}`;
+  const searchUrl = buildStoreSearchUrl(SITE_SEARCH_PARAMS.Hepsiburada, {
+    query,
+    page,
+    sort,
+    priceRange,
+  });
   if (process.env.HEPSIBURADA_DEBUG_URL === "1") {
     console.log("[hepsiburada] searchUrl", searchUrl);
   }
@@ -146,6 +154,7 @@ export async function searchHepsiburada(
   priceRange?: PriceRange,
   exactMatch = false,
   onlyNew = false,
+  sort: SortMode = "price-asc",
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const parseLimit = 100;
@@ -161,7 +170,7 @@ export async function searchHepsiburada(
     for (let page = 1; page <= HARD_PAGE_SAFETY_CAP; page++) {
       if (Date.now() - t0 >= budgetMs) break;
 
-      const html = await fetchSearchHtml(query, page, hbSession ?? undefined);
+      const html = await fetchSearchHtml(query, page, hbSession ?? undefined, sort, priceRange);
 
       let batch = parseHbListHtml(html, parseLimit);
       if (batch.length === 0) {
@@ -185,11 +194,10 @@ export async function searchHepsiburada(
         newUrls++;
       }
 
-      // Hepsiburada sonuçları artan fiyata göre geldiği için:
-      // o ana kadarki en ucuz ilgili ürün bile üst limiti aştıysa,
-      // sonraki sayfalarda aralığa düşen ürün beklenmez.
+      // Sayfalama sort moduna göre garantili ise (artan/azalan fiyat) aralık dışı
+      // olduğu anda dururuz; `relevance` modunda yalnızca adet + bütçe baz alınır.
       const relevantSoFar = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
-      if (shouldStopByCheapestRelevantAboveMax(relevantSoFar, priceRange)) break;
+      if (shouldStopBySortOrderedRange(relevantSoFar, priceRange, sort)) break;
 
       const relevant = relevantSoFar;
       const inRange = filterProductsByPriceRange(relevant, priceRange);
@@ -210,7 +218,7 @@ export async function searchHepsiburada(
 
   let relevant = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
-  return takeCheapestProducts(relevant, max);
+  return finalizeProductsForSort(relevant, max, sort);
 }
 
 function parseHbListHtml(html: string, max: number): Product[] {

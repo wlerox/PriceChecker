@@ -5,13 +5,17 @@ import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchCon
 import { fetchMediaMarktSearchHtmlWithPlaywright } from "../playwrightMediaMarkt.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
-import { takeCheapestProducts } from "../sortProducts.ts";
 import {
   filterProductsByPriceRange,
-  pageHasOnlyAboveMax,
-  shouldStopByCheapestRelevantAboveMax,
   type PriceRange,
 } from "../priceRange.ts";
+import type { SortMode } from "../sortMode.ts";
+import { SITE_SEARCH_PARAMS, buildStoreSearchUrl } from "../siteSearchParams.ts";
+import {
+  finalizeProductsForSort,
+  pageAllOutsideRange,
+  shouldStopBySortOrderedRange,
+} from "../adapterHelpers.ts";
 
 const BASE = "https://www.mediamarkt.com.tr";
 
@@ -135,12 +139,12 @@ export async function searchMediaMarkt(
   priceRange?: PriceRange,
   exactMatch = false,
   onlyNew = false,
+  sort: SortMode = "price-asc",
 ): Promise<Product[]> {
   if (process.env.MEDIAMARKT_NO_PLAYWRIGHT === "1") return [];
 
   const max = getMaxProductsPerStore();
   const minCardsOnPage = Math.max(20, max * 5);
-  const q = encodeURIComponent(query.trim());
   const merged: Product[] = [];
   const seen = new Set<string>();
   const budgetMs = getPerStoreTimeoutMs();
@@ -159,10 +163,12 @@ export async function searchMediaMarkt(
       break;
     }
 
-    const searchUrl =
-      page <= 1
-        ? `${BASE}/tr/search.html?query=${q}&sort=currentprice+asc`
-        : `${BASE}/tr/search.html?query=${q}&sort=currentprice+asc&page=${page}`;
+    const searchUrl = buildStoreSearchUrl(SITE_SEARCH_PARAMS.MediaMarkt, {
+      query,
+      page,
+      sort,
+      priceRange,
+    });
 
     let html: string;
     try {
@@ -187,10 +193,10 @@ export async function searchMediaMarkt(
     }
 
     const relevant = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
-    if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;
+    if (shouldStopBySortOrderedRange(relevant, priceRange, sort)) break;
     const inRange = filterProductsByPriceRange(relevant, priceRange);
     if (inRange.length >= max) break;
-    if (batch.length > 0 && pageHasOnlyAboveMax(batch, priceRange)) break;
+    if (batch.length > 0 && pageAllOutsideRange(batch, priceRange, sort)) break;
 
     if (batch.length === 0 || (page > 1 && newUrls === 0)) {
       consecutiveEmpty += 1;
@@ -240,5 +246,5 @@ export async function searchMediaMarkt(
     );
   }
 
-  return takeCheapestProducts(relevant, max);
+  return finalizeProductsForSort(relevant, max, sort);
 }

@@ -4,13 +4,17 @@ import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchCon
 import { createFetchSession, fetchTextCurlThenPlaywright, type FetchSession } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
-import { takeCheapestProducts } from "../sortProducts.ts";
 import {
   filterProductsByPriceRange,
-  pageHasOnlyAboveMax,
-  shouldStopByCheapestRelevantAboveMax,
   type PriceRange,
 } from "../priceRange.ts";
+import type { SortMode } from "../sortMode.ts";
+import { SITE_SEARCH_PARAMS } from "../siteSearchParams.ts";
+import {
+  finalizeProductsForSort,
+  pageAllOutsideRange,
+  shouldStopBySortOrderedRange,
+} from "../adapterHelpers.ts";
 
 const BASE = "https://www.koctas.com.tr";
 
@@ -99,11 +103,46 @@ function parseFromCards(html: string, max: number): Product[] {
   return out;
 }
 
-function buildPageUrl(query: string, page: number): string {
-  const q = encodeURIComponent(query.trim());
-  return page <= 1
-    ? `${BASE}/search?q=${q}&sort=price-asc`
-    : `${BASE}/search?q=${q}&sort=price-asc&page=${page}`;
+/**
+ * Koçtaş `q` parametresinin değerine ":sort" ve ":priceValue:min-max" fragmentleri ekler.
+ * Ör: `q=rtx:price-asc:priceValue:50-100`.
+ */
+function buildKoctasQueryValue(
+  query: string,
+  sort: SortMode,
+  priceRange: PriceRange | undefined,
+): string {
+  const cfg = SITE_SEARCH_PARAMS["Koçtaş"];
+  let value = query.trim();
+  const sortFragment = cfg.sort[sort] ?? "";
+  if (sortFragment) value += sortFragment;
+  if (priceRange) {
+    const tpl = cfg.priceRange;
+    const hasMin = priceRange.min != null && Number.isFinite(priceRange.min);
+    const hasMax = priceRange.max != null && Number.isFinite(priceRange.max);
+    let fragment: string | undefined;
+    if (hasMin && hasMax) fragment = tpl?.both;
+    else if (hasMin) fragment = tpl?.onlyMin;
+    else if (hasMax) fragment = tpl?.onlyMax;
+    if (fragment) {
+      fragment = fragment
+        .replace(/\{MIN\}/g, String(priceRange.min ?? 0))
+        .replace(/\{MAX\}/g, String(priceRange.max ?? 0));
+      value += fragment;
+    }
+  }
+  return encodeURIComponent(value);
+}
+
+function buildPageUrl(
+  query: string,
+  page: number,
+  sort: SortMode,
+  priceRange: PriceRange | undefined,
+): string {
+  const qValue = buildKoctasQueryValue(query, sort, priceRange);
+  const base = `${BASE}/search?q=${qValue}&sp=${qValue}`;
+  return page <= 1 ? base : `${base}&page=${page}`;
 }
 
 async function fetchKoctasPage(url: string, session: FetchSession): Promise<string> {
@@ -150,6 +189,7 @@ export async function searchKoctas(
   priceRange?: PriceRange,
   exactMatch = false,
   onlyNew = false,
+  sort: SortMode = "price-asc",
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const budgetMs = getPerStoreTimeoutMs();
@@ -163,7 +203,7 @@ export async function searchKoctas(
   for (let pg = 1; ; pg++) {
     if (Date.now() - t0 >= budgetMs) break;
 
-    const url = buildPageUrl(query, pg);
+    const url = buildPageUrl(query, pg, sort, priceRange);
     let page: Product[] = [];
     try {
       const html = await fetchKoctasPage(url, session);
@@ -192,13 +232,13 @@ export async function searchKoctas(
     consecutiveEmpty = 0;
 
     const relevantSoFar = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
-    if (shouldStopByCheapestRelevantAboveMax(relevantSoFar, priceRange)) break;
+    if (shouldStopBySortOrderedRange(relevantSoFar, priceRange, sort)) break;
     const inRange = filterProductsByPriceRange(relevantSoFar, priceRange);
     if (inRange.length >= max) break;
-    if (pageHasOnlyAboveMax(page, priceRange)) break;
+    if (pageAllOutsideRange(page, priceRange, sort)) break;
   }
 
   let relevant = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
-  return takeCheapestProducts(relevant, max);
+  return finalizeProductsForSort(relevant, max, sort);
 }

@@ -5,9 +5,11 @@ import { fetchTextCurl } from "../curlFetch.ts";
 import { isFetchForcePlaywright } from "../playwrightFetch.ts";
 import { fetchAmazonWithPaging } from "../playwrightAmazon.ts";
 import { parseTrPrice } from "../parsePrice.ts";
-import { takeCheapestProducts } from "../sortProducts.ts";
 import { foldForMatch, filterProductsByQuery } from "../relevance.ts";
 import { filterProductsByPriceRange, type PriceRange } from "../priceRange.ts";
+import type { SortMode } from "../sortMode.ts";
+import { SITE_SEARCH_PARAMS, buildStoreSearchUrl } from "../siteSearchParams.ts";
+import { finalizeProductsForSort } from "../adapterHelpers.ts";
 
 const BASE = "https://www.amazon.com.tr";
 const TIMEOUT_MS = 55_000;
@@ -110,17 +112,17 @@ function isLikelyAccessory(title: string): boolean {
   return ACCESSORY_WORDS.some((w) => f.includes(foldForMatch(w)));
 }
 
-function pickBestAmazonProducts(products: Product[], max: number): Product[] {
+function pickBestAmazonProducts(products: Product[], max: number, sort: SortMode): Product[] {
   const main: Product[] = [];
   const accessory: Product[] = [];
   for (const p of products) {
     if (isLikelyAccessory(p.title)) accessory.push(p);
     else main.push(p);
   }
-  const fromMain = takeCheapestProducts(main, max);
+  const fromMain = finalizeProductsForSort(main, max, sort);
   if (fromMain.length >= max) return fromMain;
   const remaining = max - fromMain.length;
-  const fromAcc = takeCheapestProducts(accessory, remaining);
+  const fromAcc = finalizeProductsForSort(accessory, remaining, sort);
   return [...fromMain, ...fromAcc];
 }
 
@@ -153,10 +155,16 @@ export async function searchAmazonTr(
   priceRange?: PriceRange,
   exactMatch = false,
   onlyNew = false,
+  sort: SortMode = "price-asc",
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
-  const q = encodeURIComponent(query.trim()).replace(/%20/g, "+");
-  const url = `${BASE}/s?k=${q}&s=price-asc-rank`;
+  // Amazon URL'inde boşluk `+` olarak gider; `buildStoreSearchUrl` `%20` döndürür; çeviriyoruz.
+  const url = buildStoreSearchUrl(SITE_SEARCH_PARAMS["Amazon TR"], {
+    query,
+    page: 1,
+    sort,
+    priceRange,
+  }).replace(/%20/g, "+");
 
   // 1) Önce curl dene — hızlı (~1-2 sn)
   if (!isFetchForcePlaywright()) {
@@ -165,7 +173,7 @@ export async function searchAmazonTr(
       if (curlHtml && curlHtml.length > 200 && hasAmazonSearchGrid(curlHtml) && !isAmazonErrorPage(curlHtml)) {
         const { all, relevant, good } = evaluateProducts(curlHtml, query, max, priceRange, exactMatch, onlyNew);
         if (good.length >= max) {
-          const result = pickBestAmazonProducts(relevant, max);
+          const result = pickBestAmazonProducts(relevant, max, sort);
           console.info(`[Amazon TR] curl ok → ${all.length} aday, ${relevant.length} eşleşen, ${good.length} ana ürün → seçilen ${result.length}`);
           return result;
         }
@@ -195,7 +203,7 @@ export async function searchAmazonTr(
   }
 
   const { all, relevant } = evaluateProducts(html, query, max, priceRange, exactMatch, onlyNew);
-  const result = pickBestAmazonProducts(relevant, max);
+  const result = pickBestAmazonProducts(relevant, max, sort);
   console.info(`[Amazon TR] toplam: ${all.length} aday → sorgu eşleşen ${relevant.length} → seçilen ${result.length} (max=${max})`);
   return result;
 }

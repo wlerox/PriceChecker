@@ -4,13 +4,17 @@ import { getMaxProductsPerStore, getPerStoreTimeoutMs } from "../config/fetchCon
 import { createFetchSession, fetchTextCurlThenPlaywright, type FetchSession } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
-import { takeCheapestProducts } from "../sortProducts.ts";
 import {
   filterProductsByPriceRange,
-  pageHasOnlyAboveMax,
-  shouldStopByCheapestRelevantAboveMax,
   type PriceRange,
 } from "../priceRange.ts";
+import type { SortMode } from "../sortMode.ts";
+import { SITE_SEARCH_PARAMS, buildStoreSearchUrl } from "../siteSearchParams.ts";
+import {
+  finalizeProductsForSort,
+  pageAllOutsideRange,
+  shouldStopBySortOrderedRange,
+} from "../adapterHelpers.ts";
 
 const BASE = "https://www.pttavm.com";
 
@@ -106,9 +110,19 @@ function dedupeByUrl(items: Product[]): Product[] {
   });
 }
 
-async function fetchPttAvmPage(q: string, page: number, session: FetchSession): Promise<string> {
-  const params = page > 1 ? `&sayfa=${page}` : "";
-  const url = `${BASE}/arama?order=price_asc&q=${q}${params}`;
+async function fetchPttAvmPage(
+  query: string,
+  page: number,
+  sort: SortMode,
+  priceRange: PriceRange | undefined,
+  session: FetchSession,
+): Promise<string> {
+  const url = buildStoreSearchUrl(SITE_SEARCH_PARAMS["PTT Avm"], {
+    query,
+    page,
+    sort,
+    priceRange,
+  });
   return fetchTextCurlThenPlaywright(
     url,
     { referer: `${BASE}/`, origin: BASE, useHttp11: true, timeoutSec: 35 },
@@ -134,9 +148,9 @@ export async function searchPttAvm(
   priceRange?: PriceRange,
   exactMatch = false,
   onlyNew = false,
+  sort: SortMode = "price-asc",
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
-  const q = encodeURIComponent(query.trim());
   const merged: Product[] = [];
   const budgetMs = getPerStoreTimeoutMs();
   const t0 = Date.now();
@@ -148,7 +162,7 @@ export async function searchPttAvm(
     if (Date.now() - t0 >= budgetMs) break;
     pg += 1;
 
-    const html = await fetchPttAvmPage(q, pg, session);
+    const html = await fetchPttAvmPage(query, pg, sort, priceRange, session);
     const batch = parsePage(html);
 
     if (batch.length === 0) {
@@ -166,14 +180,14 @@ export async function searchPttAvm(
     }
 
     const relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
-    if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;
+    if (shouldStopBySortOrderedRange(relevant, priceRange, sort)) break;
     const inRange = filterProductsByPriceRange(relevant, priceRange);
     if (inRange.length >= max) break;
-    if (pageHasOnlyAboveMax(batch, priceRange)) break;
+    if (pageAllOutsideRange(batch, priceRange, sort)) break;
   }
 
   const unique = dedupeByUrl(merged);
   let relevant = filterProductsByQuery(query, unique, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
-  return takeCheapestProducts(relevant, max);
+  return finalizeProductsForSort(relevant, max, sort);
 }

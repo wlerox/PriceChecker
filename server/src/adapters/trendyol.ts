@@ -6,15 +6,17 @@ import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
 import {
   filterProductsByPriceRange,
-  pageHasOnlyAboveMax,
-  shouldStopByCheapestRelevantAboveMax,
   type PriceRange,
 } from "../priceRange.ts";
+import type { SortMode } from "../sortMode.ts";
+import { SITE_SEARCH_PARAMS, buildStoreSearchUrl } from "../siteSearchParams.ts";
+import {
+  finalizeProductsForSort,
+  pageAllOutsideRange,
+  shouldStopBySortOrderedRange,
+} from "../adapterHelpers.ts";
 
 const BASE = "https://www.trendyol.com";
-
-/** Fiyat artan sıralama: ucuz ama alakasız ürünleri `filterProductsByQuery` eliyor. */
-const SORT_PRICE_ASC = "sst=PRICE_BY_ASC";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -277,9 +279,9 @@ export async function searchTrendyol(
   priceRange?: PriceRange,
   exactMatch = false,
   onlyNew = false,
+  sort: SortMode = "price-asc",
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
-  const q = encodeURIComponent(query.trim().toLocaleLowerCase("tr"));
   const byUrl = new Map<string, Product>();
   const budgetMs = getPerStoreTimeoutMs();
   const t0 = Date.now();
@@ -303,7 +305,12 @@ export async function searchTrendyol(
     while (true) {
       if (Date.now() - t0 >= budgetMs) break;
       pi += 1;
-      const searchUrl = `${BASE}/sr?q=${q}&${SORT_PRICE_ASC}&pi=${pi}`;
+      const searchUrl = buildStoreSearchUrl(SITE_SEARCH_PARAMS.Trendyol, {
+        query,
+        page: pi,
+        sort,
+        priceRange,
+      });
       await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
       await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
       await Promise.race([
@@ -336,10 +343,10 @@ export async function searchTrendyol(
       }
 
       const relevant = filterProductsByQuery(query, [...byUrl.values()], undefined, exactMatch, onlyNew);
-      if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) break;
+      if (shouldStopBySortOrderedRange(relevant, priceRange, sort)) break;
       const inRange = filterProductsByPriceRange(relevant, priceRange);
       if (inRange.length >= max) break;
-      if (pageHasOnlyAboveMax(batch, priceRange)) break;
+      if (pageAllOutsideRange(batch, priceRange, sort)) break;
     }
 
     await context.close();
@@ -350,6 +357,5 @@ export async function searchTrendyol(
   const out = [...byUrl.values()];
   let relevant = filterProductsByQuery(query, out, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
-  relevant.sort((a, b) => a.price - b.price);
-  return relevant.slice(0, max);
+  return finalizeProductsForSort(relevant, max, sort);
 }

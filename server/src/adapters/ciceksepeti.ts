@@ -9,19 +9,28 @@ import {
   type FetchSession,
 } from "../playwrightFetch.ts";
 import { filterProductsByQuery } from "../relevance.ts";
-import { takeCheapestProducts } from "../sortProducts.ts";
 import {
   filterProductsByPriceRange,
-  pageHasOnlyAboveMax,
-  shouldStopByCheapestRelevantAboveMax,
   type PriceRange,
 } from "../priceRange.ts";
+import type { SortMode } from "../sortMode.ts";
+import { SITE_SEARCH_PARAMS } from "../siteSearchParams.ts";
+import {
+  finalizeProductsForSort,
+  pageAllOutsideRange,
+  shouldStopBySortOrderedRange,
+} from "../adapterHelpers.ts";
 
 const SITE = "https://www.ciceksepeti.com";
 const SUGGEST_API = "https://cs-web.ciceksepeti.com/store/api/v1/suggests/ch/search";
 
-/** orderby=3 → en düşük fiyat sıralaması (choice=1 ise artan fiyat) */
-const SORT_PRICE_ASC_PARAMS = "choice=1&orderby=3";
+/**
+ * Site sıralama parametre adı: "orderby".
+ *  - price-asc → 3 (ucuzdan pahalıya)
+ *  - price-desc → 2
+ *  - relevance → hiç eklenmez
+ */
+const CICEKSEPETI_CFG = SITE_SEARCH_PARAMS["Çiçeksepeti"];
 
 /** Ardışık boş sayfa toleransı: site geçici olarak boş HTML dönerse pes etmeden birkaç deneme. */
 const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
@@ -78,12 +87,44 @@ async function resolveSuggestPath(query: string): Promise<string | null> {
   return null;
 }
 
-function buildPageUrl(base: string, page: number): string {
-  const joiner = base.includes("?") ? "&" : "?";
-  const sortedBase = base.includes("orderby=") ? base : `${base}${joiner}${SORT_PRICE_ASC_PARAMS}`;
-  if (page <= 1) return sortedBase;
-  const sep = sortedBase.includes("?") ? "&" : "?";
-  return `${sortedBase}${sep}sayfa=${page}`;
+function append(url: string, param: string): string {
+  if (!param) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}${param}`;
+}
+
+function buildPriceRangeParam(priceRange: PriceRange | undefined): string {
+  if (!priceRange) return "";
+  const tpl = CICEKSEPETI_CFG.priceRange;
+  if (!tpl) return "";
+  const hasMin = priceRange.min != null && Number.isFinite(priceRange.min);
+  const hasMax = priceRange.max != null && Number.isFinite(priceRange.max);
+  if (!hasMin && !hasMax) return "";
+  let t: string | undefined;
+  if (hasMin && hasMax) t = tpl.both;
+  else if (hasMin) t = tpl.onlyMin;
+  else t = tpl.onlyMax;
+  if (!t) return "";
+  return t
+    .replace(/\{MIN\}/g, String(priceRange.min ?? 0))
+    .replace(/\{MAX\}/g, String(priceRange.max ?? 0));
+}
+
+function buildPageUrl(
+  base: string,
+  page: number,
+  sort: SortMode,
+  priceRange: PriceRange | undefined,
+): string {
+  let url = base;
+  if (!url.includes("orderby=")) {
+    const sortParam = CICEKSEPETI_CFG.sort[sort] ?? "";
+    if (sortParam) url = append(url, sortParam);
+  }
+  const priceParam = buildPriceRangeParam(priceRange);
+  if (priceParam) url = append(url, priceParam);
+  if (page > 1) url = append(url, `sayfa=${page}`);
+  return url;
 }
 
 async function fetchCiceksepetiPage(pageUrl: string, session: FetchSession): Promise<string> {
@@ -154,6 +195,7 @@ async function paginate(
   budgetMs: number,
   session: FetchSession,
   label: string,
+  sort: SortMode,
 ): Promise<PaginateOutcome> {
   let pg = 0;
   let consecutiveEmpty = 0;
@@ -168,7 +210,7 @@ async function paginate(
     }
     pg += 1;
 
-    const pageUrl = buildPageUrl(baseUrl, pg);
+    const pageUrl = buildPageUrl(baseUrl, pg, sort, priceRange);
     let html: string;
     try {
       html = await fetchCiceksepetiPage(pageUrl, session);
@@ -197,10 +239,10 @@ async function paginate(
     for (const p of batch) merged.push(p);
 
     const relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
-    if (shouldStopByCheapestRelevantAboveMax(relevant, priceRange)) return { finished: true, pagesFetched, lastError, timedOut: false };
+    if (shouldStopBySortOrderedRange(relevant, priceRange, sort)) return { finished: true, pagesFetched, lastError, timedOut: false };
     const inRange = filterProductsByPriceRange(relevant, priceRange);
     if (inRange.length >= max) return { finished: true, pagesFetched, lastError, timedOut: false };
-    if (pageHasOnlyAboveMax(batch, priceRange)) return { finished: true, pagesFetched, lastError, timedOut: false };
+    if (pageAllOutsideRange(batch, priceRange, sort)) return { finished: true, pagesFetched, lastError, timedOut: false };
   }
   return { finished: true, pagesFetched, lastError, timedOut: false };
 }
@@ -210,6 +252,7 @@ export async function searchCiceksepeti(
   priceRange?: PriceRange,
   exactMatch = false,
   onlyNew = false,
+  sort: SortMode = "price-asc",
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const q = query.trim();
@@ -223,7 +266,7 @@ export async function searchCiceksepeti(
   /** 1) Ana arama yolu: `/arama?qt=...&query=...` */
   const aramaBase = `${SITE}/arama?qt=${encodeURIComponent(q)}&query=${encodeURIComponent(q)}`;
   const r1 = await paginate(
-    aramaBase, query, priceRange, exactMatch, onlyNew, max, merged, t0, budgetMs, session, "arama",
+    aramaBase, query, priceRange, exactMatch, onlyNew, max, merged, t0, budgetMs, session, "arama", sort,
   );
 
   /** 2) Yeterli eşleşme yoksa ve bütçe kaldıysa kategori önerisini dene */
@@ -239,7 +282,7 @@ export async function searchCiceksepeti(
       const normalized = suggestPath.startsWith("/") ? suggestPath : `/${suggestPath}`;
       const catBase = `${SITE}${normalized}`;
       r2 = await paginate(
-        catBase, query, priceRange, exactMatch, onlyNew, max, merged, t0, budgetMs, session, "kategori",
+        catBase, query, priceRange, exactMatch, onlyNew, max, merged, t0, budgetMs, session, "kategori", sort,
       );
     }
   }
@@ -287,5 +330,5 @@ export async function searchCiceksepeti(
     );
   }
 
-  return takeCheapestProducts(relevant, max);
+  return finalizeProductsForSort(relevant, max, sort);
 }

@@ -24,8 +24,28 @@ export function sortProductsByPriceAsc(products: Product[]): Product[] {
   return [...products].sort(compareProductPriceAsc);
 }
 
+export function compareProductPriceDesc(a: Product, b: Product): number {
+  return -compareProductPriceAsc(a, b);
+}
+
+export function sortProductsByPriceDesc(products: Product[]): Product[] {
+  return [...products].sort(compareProductPriceDesc);
+}
+
 /** Fiyata göre artan sıra; en fazla `max` ürün (mağaza başı limit için). */
 export function takeCheapestProducts(products: Product[], max: number): Product[] {
   if (max <= 0) return [];
   return sortProductsByPriceAsc(products).slice(0, max);
+}
+
+/** Fiyata göre azalan sıra; en fazla `max` ürün. */
+export function takeMostExpensiveProducts(products: Product[], max: number): Product[] {
+  if (max <= 0) return [];
+  return sortProductsByPriceDesc(products).slice(0, max);
+}
+
+/** Giriş sırasını koruyarak ilk `max` ürünü döndürür (relevance modu için). */
+export function takeFirstProducts(products: Product[], max: number): Product[] {
+  if (max <= 0) return [];
+  return products.slice(0, max);
 }

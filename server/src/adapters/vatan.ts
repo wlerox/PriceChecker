@@ -5,13 +5,17 @@ import { fetchTextCurl, fetchTextCurlWithSession } from "../curlFetch.ts";
 import { fetchTextPlaywright, isFetchForcePlaywright } from "../playwrightFetch.ts";
 import { parseTrPrice } from "../parsePrice.ts";
 import { filterProductsByQuery } from "../relevance.ts";
-import { takeCheapestProducts } from "../sortProducts.ts";
 import {
   filterProductsByPriceRange,
-  pageHasOnlyAboveMax,
-  shouldStopByCheapestRelevantAboveMax,
   type PriceRange,
 } from "../priceRange.ts";
+import type { SortMode } from "../sortMode.ts";
+import { SITE_SEARCH_PARAMS } from "../siteSearchParams.ts";
+import {
+  finalizeProductsForSort,
+  pageAllOutsideRange,
+  shouldStopBySortOrderedRange,
+} from "../adapterHelpers.ts";
 
 const BASE = "https://www.vatanbilgisayar.com";
 
@@ -110,14 +114,39 @@ function parseVatanHtml(html: string, maxRows: number): Product[] {
   return out;
 }
 
-function buildListUrl(keywordPath: string, categorySeg: string | undefined, page: number): string {
+function pickVatanSortToken(sort: SortMode): string {
+  const raw = SITE_SEARCH_PARAMS.Vatan.sort[sort] ?? "";
+  const eq = raw.indexOf("=");
+  return eq > 0 ? raw.slice(eq + 1) : raw;
+}
+
+function buildListUrl(
+  keywordPath: string,
+  categorySeg: string | undefined,
+  page: number,
+  sort: SortMode,
+  priceRange: PriceRange | undefined,
+): string {
   const basePath = categorySeg
     ? `/arama/${keywordPath}/${categorySeg.replace(/^\/|\/$/g, "")}/`
     : `/arama/${keywordPath}/`;
   const params = new URLSearchParams();
-  params.set("srt", "UP");
+  const sortValue = pickVatanSortToken(sort);
+  if (sortValue) params.set("srt", sortValue);
   params.set("stk", "true");
   if (page > 1) params.set("PageNo", String(page));
+  if (priceRange) {
+    if (priceRange.min != null && Number.isFinite(priceRange.min)) {
+      params.set("min", String(priceRange.min));
+    } else if (priceRange.max != null) {
+      params.set("min", "");
+    }
+    if (priceRange.max != null && Number.isFinite(priceRange.max)) {
+      params.set("max", String(priceRange.max));
+    } else if (priceRange.min != null) {
+      params.set("max", "");
+    }
+  }
   return `${BASE}${basePath}?${params.toString()}`;
 }
 
@@ -157,6 +186,7 @@ export async function searchVatan(
   priceRange?: PriceRange,
   exactMatch = false,
   onlyNew = false,
+  sort: SortMode = "price-asc",
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const slugs = slugCandidates(query);
@@ -189,7 +219,7 @@ export async function searchVatan(
           break;
         }
 
-        const url = buildListUrl(pathSeg, attempt.categorySeg, pg);
+        const url = buildListUrl(pathSeg, attempt.categorySeg, pg, sort, priceRange);
         let html = "";
         try {
           html = await fetchVatanPage(url, i === 0 && j === 0 && pg === 1);
@@ -218,15 +248,15 @@ export async function searchVatan(
         consecutiveEmpty = 0;
 
         const relevantSoFar = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
-        if (shouldStopByCheapestRelevantAboveMax(relevantSoFar, priceRange)) break;
+        if (shouldStopBySortOrderedRange(relevantSoFar, priceRange, sort)) break;
         const inRange = filterProductsByPriceRange(relevantSoFar, priceRange);
         if (inRange.length >= max) break;
-        if (pageHasOnlyAboveMax(page, priceRange)) break;
+        if (pageAllOutsideRange(page, priceRange, sort)) break;
       }
 
       let relevant = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
       relevant = filterProductsByPriceRange(relevant, priceRange);
-      if (relevant.length > 0) return takeCheapestProducts(relevant, max);
+      if (relevant.length > 0) return finalizeProductsForSort(relevant, max, sort);
       if (stopAttempt) break;
     }
   }
