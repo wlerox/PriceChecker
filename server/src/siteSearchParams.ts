@@ -355,17 +355,16 @@ export const SITE_SEARCH_PARAMS = {
       both: "p1={MIN}&p2={MAX}",
     },
   },
-  // Epey: PHP serialization ile encode edilmiş filtre segmenti; tam format çözülene
-  // kadar sadece sort tokeni ve temel path kullanılır. Fiyat aralığı geçici olarak yok.
-  // TODO: PHP serialized filter parametrelerini çöz → priceRange templates eklenecek.
+  // Epey: Arama URL'i `/arama/e/{BASE64(PHP_SERIALIZED)}/{N}/?sirala=...` biçimindedir.
+  // `buildStoreSearchUrl` bu özel şemayı üretemediği için adapter kendi URL
+  // kurucusunu kullanır (bkz. `adapters/epey.ts`). Bu tablo yalnızca sort
+  // tokenlerini paylaşmak için tutuluyor. Fiyat aralığı site filtresinde ayrı
+  // bir PHP serialized segment gerektirdiği için sunucu tarafında uygulanır.
   Epey: {
     base: "https://www.epey.com",
-    searchPathTemplate: "/4/{Q}/",
-    pageParamTemplate: "sayfa-{N}",
+    searchPathTemplate: "/arama/e/{Q}/",
+    pageParamTemplate: "{N}/",
     sort: {
-      // Not: Epey'de `fiyat:ASC` görsel olarak "ucuzdan pahalıya" anlamına geliyor.
-      // Kullanıcı tablosu ters verdiği için site davranışına göre aşağıdaki şekilde
-      // sabitledik (ASC = ucuzdan pahalıya, DESC = pahalıdan ucuza).
       "price-asc": "sirala=fiyat:ASC",
       "price-desc": "sirala=fiyat:DESC",
       relevance: "",
