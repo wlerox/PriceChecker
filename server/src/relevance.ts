@@ -12,7 +12,13 @@ export function queryTokensForMatch(query: string): string[] {
     .toLocaleLowerCase("tr")
     .split(/[^\p{L}\p{N}]+/u)
     .map((w) => w.trim())
-    .filter((w) => w.length >= 2);
+    .filter((w) => w.length >= 2)
+    .flatMap((w) => {
+      // "128gb" -> ["128","gb"], "5060ti" -> ["5060","ti"].
+      // Böylece bitişik/ayrık yazımlar aynı şekilde eşleşebilir.
+      const parts = w.match(/\p{N}+|\p{L}+/gu) ?? [w];
+      return parts.filter((part) => part.length >= 2);
+    });
   const uniq = [...new Set(raw)];
   return uniq.filter((t) => {
     if (!/^\d+$/.test(t)) return true;
@@ -82,7 +88,18 @@ function titleMatchesQueryTokensInOrder(foldedTitle: string, foldedTokens: strin
 function titleMatchesQueryTokensExactly(foldedTitle: string, foldedTokens: string[]): boolean {
   if (foldedTokens.length === 0) return true;
   const escaped = foldedTokens.map(escapeRegExp);
-  const joined = escaped.join("[^\\p{L}\\p{N}]+");
+  const joined = escaped
+    .map((tok, idx) => {
+      if (idx === 0) return tok;
+      const prev = foldedTokens[idx - 1]!;
+      const curr = foldedTokens[idx]!;
+      const prevIsDigits = /^\d+$/.test(prev);
+      const currIsDigits = /^\d+$/.test(curr);
+      const between =
+        prevIsDigits !== currIsDigits ? "[^\\p{L}\\p{N}]*" : "[^\\p{L}\\p{N}]+";
+      return `${between}${tok}`;
+    })
+    .join("");
   const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])${joined}(?:$|[^\\p{L}\\p{N}])`, "u");
   return re.test(foldedTitle);
 }

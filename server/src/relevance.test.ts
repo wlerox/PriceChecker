@@ -42,6 +42,15 @@ test("iphone 15 128 gb: başlıktaki 128GB bitişik yazımı eşleşir", () => {
   assert.ok(out[0].title.includes("128GB"));
 });
 
+test("iphone 15 128gb: başlıktaki 128 GB ayrık yazımı eşleşir", () => {
+  const out = filterProductsByQuery("iphone 15 128gb", [
+    p("Apple iPhone 15 128 GB Siyah"),
+    p("Apple iPhone 15 256 GB Siyah"),
+  ]);
+  assert.equal(out.length, 1);
+  assert.ok(out[0].title.includes("128 GB"));
+});
+
 test("tek kelime", () => {
   const out = filterProductsByQuery("kulaklık", [p("Bluetooth kulaklık JBL"), p("Mouse kablosuz")]);
   assert.equal(out.length, 1);
@@ -103,6 +112,28 @@ test("tam eşleşme modunda bitişik ifade zorunludur", () => {
   const out = filterProductsByQuery("rtx 5060ti", rows, undefined, true);
   assert.equal(out.length, 1);
   assert.ok(out[0].title.includes("RTX 5060Ti"));
+});
+
+test("tam eşleşme modunda sayi-birim bitişik yazımı kabul edilir (128 gb = 128gb)", () => {
+  const out = filterProductsByQuery(
+    "iphone 15 128 gb",
+    [p("Apple iPhone 15 128GB Siyah"), p("Apple iPhone 15 256GB Siyah")],
+    undefined,
+    true,
+  );
+  assert.equal(out.length, 1);
+  assert.ok(out[0].title.includes("128GB"));
+});
+
+test("tam eşleşme modunda sayi-birim ayrık yazımı da kabul edilir (128gb = 128 gb)", () => {
+  const out = filterProductsByQuery(
+    "iphone 15 128gb",
+    [p("Apple iPhone 15 128 GB Siyah"), p("Apple iPhone 15 256 GB Siyah")],
+    undefined,
+    true,
+  );
+  assert.equal(out.length, 1);
+  assert.ok(out[0].title.includes("128 GB"));
 });
 
 test("dizüstü alt kategorisinde aksesuar satırları elenir", () => {
