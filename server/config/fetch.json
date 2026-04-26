@@ -10,6 +10,7 @@
     "playwrightUseEdge": "false: Edge’i atlama listesine al; null: varsayılan. Ortam: PLAYWRIGHT_USE_EDGE önceliklidir.",
     "maxProductsPerStore": "Her mağaza için en fazla kaç ürün adayı (sorgu ile eşleşenler arasından fiyata göre en ucuz N). 1 yapınca ilgili mağaza araması yeterli aday bulunca mümkün olan yerlerde erken biter. Ortam: FETCH_MAX_PRODUCTS_PER_STORE (öncelikli).",
     "perStoreTimeoutMs": "Bir mağaza için toplam sayfalama/arama bütçesi (ms). Tüm adapter'lar aynı süreye tabi; bu süre dolunca arama erken biter. Alt sınır 5000, üst sınır 600000. Ortam: STREAM_PER_STORE_TIMEOUT_MS (öncelikli).",
+    "captchaSolveTimeoutMs": "Headed (görünür) tarayıcıda CAPTCHA / bot koruması algılandığında kullanıcının el ile çözmesini beklemek için maksimum süre (ms). 0 = özellik kapalı. Alt sınır 10000, üst sınır 600000. Varsayılan: 180000 (3 dk).",
     "telegram": "Telegram bildirimleri için geçici konfig alanı. Not: mevcut kodda aktif kullanım env üzerinden (TELEGRAM_*)."
   },
   "forcePlaywright": false,
@@ -21,6 +22,7 @@
   "playwrightUseEdge": null,
   "maxProductsPerStore": 1,
   "perStoreTimeoutMs": 90000,
+  "captchaSolveTimeoutMs": 180000,
   "telegram": {
     "enabled": false,
     "botToken": "8101161426:AAG1gV3alT08TvLg1HKXW9Wn3w1TC-mmilI",

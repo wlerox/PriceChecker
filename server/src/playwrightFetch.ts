@@ -1,6 +1,6 @@
 import type { Page } from "playwright";
 import { fetchTextCurl, type FetchTextCurlOptions } from "./curlFetch.ts";
-import { isFetchCurlVerboseLog, isFetchForcePlaywright } from "./config/fetchConfig.ts";
+import { isFetchCurlVerboseLog, isFetchForcePlaywright, getCaptchaSolveTimeoutMs } from "./config/fetchConfig.ts";
 import { launchChromiumPreferInstalled, playwrightHeadless } from "./playwrightLaunch.ts";
 import {
   addPlaywrightFetchInitScripts,
@@ -94,6 +94,89 @@ function curlVerbose(): boolean {
   return isFetchCurlVerboseLog();
 }
 
+/**
+ * Cloudflare, WAF, hCaptcha, reCAPTCHA veya genel erişim engeli sayfası tespiti.
+ * HTML içeriğine bakarak bot koruması aktifse `true` döner.
+ */
+function isBotProtectionHtml(html: string): boolean {
+  if (html.length < 1500) return true;
+  // Cloudflare JS challenge
+  if (/cf_chl_opt|cf-please-wait|__cf_chl_f_tk|cloudflare.*checking your browser/i.test(html)) return true;
+  // Genel "Just a moment" / bekleme başlıkları
+  if (/<title[^>]*>\s*(?:Just a moment|Please wait|Bir moment|Access [Dd]enied|403 |DDoS protection)/i.test(html)) return true;
+  // hCaptcha / reCAPTCHA yerleşimi
+  if (/hcaptcha\.com\/captcha|grecaptcha\.execute|g-recaptcha[^-]/.test(html)) return true;
+  // Akamai / PerimeterX
+  if (/_pxCaptcha|px-captcha|PerimeterX|perimeterx/.test(html)) return true;
+  return false;
+}
+
+/**
+ * Headed (görünür) tarayıcı açıkken bot koruması tespit edildiğinde çağrılır.
+ * Kullanıcı CAPTCHA'yı çözene kadar (ya da `timeoutMs` dolana kadar) bekler.
+ *
+ * Çözüm tespiti: her `pollMs`'de bir `page.content()` çeker; bot koruması HTML'i
+ * artık görünmüyorsa VE adapter'ın `waitForAnySelectors`'larından en az biri
+ * sayfada bulunuyorsa "çözüldü" kabul edilir.
+ *
+ * @returns true → başarıyla çözüldü, false → süre doldu
+ */
+async function waitForBotProtectionSolve(
+  page: Page,
+  waitForAnySelectors: string[] | undefined,
+  timeoutMs: number,
+  label?: string,
+): Promise<boolean> {
+  const t0 = Date.now();
+  const POLL_MS = 1500;
+  const t = tag(label);
+
+  console.warn(`\n${"=".repeat(60)}`);
+  console.warn(`${t} ⚠  BOT KORUMASI TESPİT EDİLDİ`);
+  console.warn(`${t}    Tarayıcı penceresinde doğrulamayı tamamlayın.`);
+  console.warn(`${t}    Süre: ${Math.round(timeoutMs / 1000)} saniye`);
+  console.warn(`${"=".repeat(60)}\n`);
+
+  let lastLogSec = -1;
+
+  while (Date.now() - t0 < timeoutMs) {
+    await delay(POLL_MS);
+
+    let html: string;
+    try {
+      html = await page.content();
+    } catch {
+      break;
+    }
+
+    if (!isBotProtectionHtml(html)) {
+      // Bot koruması kalktı; eğer belirli seçiciler istendiyse onları da bekle
+      if (waitForAnySelectors?.length) {
+        const found = await Promise.any(
+          waitForAnySelectors.map((sel) =>
+            page.waitForSelector(sel, { timeout: 8000 }).then(() => true)
+          )
+        ).catch(() => false);
+        if (!found) continue; // Sayfa hâlâ yükleniyor olabilir, bir sonraki poll'da tekrar dene
+      }
+      const elapsed = Math.round((Date.now() - t0) / 1000);
+      console.info(`\n${t} ✅ Doğrulama tamamlandı! (${elapsed}s içinde) Arama devam ediyor...\n`);
+      return true;
+    }
+
+    // Her 20 saniyede bir hatırlatıcı
+    const elapsed = Math.round((Date.now() - t0) / 1000);
+    const remaining = Math.round((timeoutMs - (Date.now() - t0)) / 1000);
+    if (elapsed - lastLogSec >= 20) {
+      lastLogSec = elapsed;
+      console.info(`${t} ⏳ Bot koruması çözülmesi bekleniyor... (kalan ${remaining}s)`);
+    }
+  }
+
+  console.warn(`${t} ⌛ Bot koruması doğrulama süresi doldu (${Math.round(timeoutMs / 1000)}s).`);
+  return false;
+}
+
 async function tryDismissCookieConsent(
   page: Page,
   selectors: string[],
@@ -157,6 +240,37 @@ export async function fetchTextPlaywright(url: string, options?: FetchTextPlaywr
 
     if (options?.postLoadWaitMs && options.postLoadWaitMs > 0) {
       await delay(options.postLoadWaitMs);
+    }
+
+    // Headed (görünür) tarayıcıda bot koruması varsa kullanıcının çözmesini bekle.
+    // `captchaSolveTimeoutMs > 0` ise bu özellik aktiftir (fetch.json → captchaSolveTimeoutMs).
+    if (!headless) {
+      const captchaTimeoutMs = getCaptchaSolveTimeoutMs();
+      if (captchaTimeoutMs > 0) {
+        const checkHtml = await page.content().catch(() => "");
+        if (isBotProtectionHtml(checkHtml)) {
+          const solved = await waitForBotProtectionSolve(
+            page,
+            options?.waitForAnySelectors,
+            captchaTimeoutMs,
+            label,
+          );
+          if (solved) {
+            // CAPTCHA çözüldü: selektörler + bekleme adımlarını tekrar çalıştır
+            if (!options?.skipNetworkIdle) {
+              await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+            }
+            if (options?.waitForAnySelectors?.length) {
+              await Promise.race(
+                options.waitForAnySelectors.map((sel) => page.waitForSelector(sel, { timeout: 10000 }))
+              ).catch(() => {});
+            }
+            if (options?.postLoadWaitMs && options.postLoadWaitMs > 0) {
+              await delay(options.postLoadWaitMs);
+            }
+          }
+        }
+      }
     }
 
     const scrollRounds = options?.lazyScrollRounds ?? 0;

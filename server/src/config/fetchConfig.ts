@@ -15,6 +15,12 @@ export type FetchConfigFile = {
   /** false: Edge’i atla; null: varsayılan */
   playwrightUseEdge?: boolean | null;
   /**
+   * Headed (görünür) tarayıcıda CAPTCHA / bot koruması algılandığında kullanıcının
+   * el ile çözmesini beklemek için maksimum süre (ms). 0 = özellik kapalı.
+   * Varsayılan: 180000 (3 dakika).
+   */
+  captchaSolveTimeoutMs?: number;
+  /**
    * Mağaza başına en fazla kaç ürün adayı döndürüleceği (fiyata göre en ucuz N).
    * Ortam: FETCH_MAX_PRODUCTS_PER_STORE (sayı; öncelikli).
    */
@@ -42,6 +48,7 @@ export type ResolvedFetchConfig = {
   playwrightChannel: string;
   playwrightUseChrome: boolean | null;
   playwrightUseEdge: boolean | null;
+  captchaSolveTimeoutMs: number;
   maxProductsPerStore: number;
   perStoreTimeoutMs: number;
   telegram: {
@@ -61,6 +68,7 @@ const DEFAULTS: ResolvedFetchConfig = {
   playwrightChannel: "",
   playwrightUseChrome: null,
   playwrightUseEdge: null,
+  captchaSolveTimeoutMs: 180_000,
   maxProductsPerStore: 15,
   perStoreTimeoutMs: 90_000,
   telegram: {
@@ -93,6 +101,15 @@ function parseJsonFile(filePath: string): FetchConfigFile {
   const raw = readFileSync(filePath, "utf8");
   const data = JSON.parse(raw) as FetchConfigFile;
   return data;
+}
+
+function clampCaptchaSolveTimeoutMs(n: unknown): number {
+  if (typeof n !== "number" || !Number.isFinite(n)) return DEFAULTS.captchaSolveTimeoutMs;
+  const x = Math.floor(n);
+  if (x <= 0) return 0; // 0 = devre dışı
+  if (x < 10_000) return 10_000;
+  if (x > 600_000) return 600_000;
+  return x;
 }
 
 function clampMaxProductsPerStore(n: unknown): number {
@@ -152,6 +169,7 @@ function mergeFromFile(base: ResolvedFetchConfig): ResolvedFetchConfig {
   if (typeof file.playwrightChannel === "string") out.playwrightChannel = file.playwrightChannel;
   if (file.playwrightUseChrome !== undefined) out.playwrightUseChrome = file.playwrightUseChrome;
   if (file.playwrightUseEdge !== undefined) out.playwrightUseEdge = file.playwrightUseEdge;
+  if (file.captchaSolveTimeoutMs !== undefined) out.captchaSolveTimeoutMs = clampCaptchaSolveTimeoutMs(file.captchaSolveTimeoutMs);
   if (file.maxProductsPerStore !== undefined) out.maxProductsPerStore = clampMaxProductsPerStore(file.maxProductsPerStore);
   if (file.perStoreTimeoutMs !== undefined) out.perStoreTimeoutMs = clampPerStoreTimeoutMs(file.perStoreTimeoutMs);
   if (file.telegram) {
@@ -249,4 +267,14 @@ export function getMaxProductsPerStore(): number {
  */
 export function getPerStoreTimeoutMs(): number {
   return getFetchConfig().perStoreTimeoutMs;
+}
+
+/**
+ * Headed (görünür) tarayıcıda CAPTCHA / bot koruması algılandığında
+ * kullanıcının el ile çözmesini beklemek için maksimum süre (ms).
+ * 0 döndürürse özellik kapalı demektir.
+ * `config/fetch.json` → `captchaSolveTimeoutMs` ile ayarlanır (varsayılan 180 000).
+ */
+export function getCaptchaSolveTimeoutMs(): number {
+  return getFetchConfig().captchaSolveTimeoutMs;
 }
