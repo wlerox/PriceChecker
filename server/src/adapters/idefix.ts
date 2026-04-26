@@ -21,24 +21,73 @@ const BASE = "https://www.idefix.com";
 const HB_STYLE_P_ID = /-p-(\d+)(?:[#?]|$)/;
 const PER_PAGE_CAP = 28;
 
-function parseProductsFromHtml(html: string): Product[] {
-  const $ = cheerio.load(html);
-  const out: Product[] = [];
+function normalizeIdefixUrl(raw: string): string {
+  let href = raw;
+  if (!href) return "";
+  if (!href.startsWith("http")) href = BASE + (href.startsWith("/") ? href : `/${href}`);
+  return href.split("?")[0].split("#")[0];
+}
 
+function parseJsonLdProducts($: cheerio.CheerioAPI): Product[] {
+  const out: Product[] = [];
+  $('script[type="application/ld+json"]').each((_, el) => {
+    try {
+      const parsed = JSON.parse($(el).html() ?? "{}") as unknown;
+      const roots = Array.isArray(parsed) ? parsed : [parsed];
+      for (const root of roots) {
+        if (!root || typeof root !== "object") continue;
+        const list = (root as { itemListElement?: unknown }).itemListElement;
+        if (!Array.isArray(list)) continue;
+        for (const row of list) {
+          const entry = row as {
+            item?: { name?: unknown; url?: unknown; offers?: { price?: unknown; lowPrice?: unknown } };
+            name?: unknown;
+            url?: unknown;
+            offers?: { price?: unknown; lowPrice?: unknown };
+          };
+          const item = entry.item ?? entry;
+          const url = normalizeIdefixUrl(String(item.url ?? ""));
+          if (!HB_STYLE_P_ID.test(url)) continue;
+          const title = String(item.name ?? "").replace(/\s+/g, " ").trim();
+          const price = parseTrPrice(item.offers?.price ?? item.offers?.lowPrice);
+          if (!title || price == null || price <= 0) continue;
+          out.push({
+            store: "İdefix",
+            title: title.slice(0, 300),
+            price,
+            currency: "TRY",
+            url,
+          });
+        }
+      }
+    } catch {
+      // ignore malformed script payload
+    }
+  });
+  return out;
+}
+
+function parseProductCards($: cheerio.CheerioAPI): Product[] {
+  const out: Product[] = [];
   $('a[href*="-p-"]').each((_, el) => {
     if (out.length >= PER_PAGE_CAP) return false;
     const a = $(el);
-    let href = a.attr("href") ?? "";
-    if (!HB_STYLE_P_ID.test(href)) return;
-    if (!href.startsWith("http")) href = BASE + (href.startsWith("/") ? href : `/${href}`);
-    const clean = href.split("?")[0].split("#")[0];
+    const clean = normalizeIdefixUrl(a.attr("href") ?? "");
+    if (!HB_STYLE_P_ID.test(clean)) return;
 
-    const block = a.closest('div[class*="group"]');
-    const title = block.find("h3").first().text().replace(/\s+/g, " ").trim();
+    const block = a.closest("article,li,div");
+    let title = a.find("h3").first().text().replace(/\s+/g, " ").trim();
+    if (!title) title = block.find("h3").first().text().replace(/\s+/g, " ").trim();
+    if (!title) title = (a.attr("title") ?? "").replace(/\s+/g, " ").trim();
+    if (!title) return;
 
-    const sepetteText = block.find("span.text-secondary-500").first().text().replace(/Sepette\s*/i, "");
-    const normalText = block.find('[class*="text-neutral-1000"]').first().text();
-    const price = parseTrPrice(sepetteText) ?? parseTrPrice(normalText);
+    const cardText = block.text().replace(/\s+/g, " ").trim();
+    const nonSepetteText = cardText.replace(/sepette\s*[\d.]+,\d{2}\s*tl?/giu, " ");
+    const listPrice = parseTrPrice(nonSepetteText);
+    const sepetteMatch = cardText.match(/sepette\s*([\d.]+,\d{2})/iu);
+    const sepettePrice = sepetteMatch ? parseTrPrice(sepetteMatch[1]) : null;
+    // Sepette indirimi varsa onu kullan; yoksa normal liste fiyatına düş.
+    const price = sepettePrice ?? listPrice;
     if (!title || price == null) return;
 
     out.push({
@@ -51,6 +100,21 @@ function parseProductsFromHtml(html: string): Product[] {
   });
 
   return out;
+}
+
+function parseProductsFromHtml(html: string): Product[] {
+  const $ = cheerio.load(html);
+  const jsonLd = parseJsonLdProducts($);
+  const cards = parseProductCards($);
+  const seen = new Set<string>();
+  const merged: Product[] = [];
+  for (const p of [...jsonLd, ...cards]) {
+    if (seen.has(p.url)) continue;
+    seen.add(p.url);
+    merged.push(p);
+    if (merged.length >= PER_PAGE_CAP) break;
+  }
+  return merged;
 }
 
 function dedupeByUrl(items: Product[]): Product[] {
