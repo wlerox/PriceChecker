@@ -18,6 +18,8 @@ const p = (title: string): Product => ({
 
 test("rtx 5080 hem rtx hem 5080 ister", () => {
   assert.deepEqual(queryTokensForMatch("rtx 5080"), ["rtx", "5080"]);
+  assert.deepEqual(queryTokensForMatch("rtx5050"), ["rtx", "5050"]);
+  assert.deepEqual(queryTokensForMatch("rtx5050", false), ["rtx5050"]);
   const out = filterProductsByQuery("rtx 5080", [
     p("ASUS RTX 5080 OC 16GB"),
     p("MSI RTX 5070 12GB"),
@@ -114,26 +116,26 @@ test("tam eşleşme modunda bitişik ifade zorunludur", () => {
   assert.ok(out[0].title.includes("RTX 5060Ti"));
 });
 
-test("tam eşleşme modunda sayi-birim bitişik yazımı kabul edilir (128 gb = 128gb)", () => {
+test("tam eşleşme modunda 128 gb yalnızca ayrık yazımı eşler", () => {
   const out = filterProductsByQuery(
     "iphone 15 128 gb",
-    [p("Apple iPhone 15 128GB Siyah"), p("Apple iPhone 15 256GB Siyah")],
-    undefined,
-    true,
-  );
-  assert.equal(out.length, 1);
-  assert.ok(out[0].title.includes("128GB"));
-});
-
-test("tam eşleşme modunda sayi-birim ayrık yazımı da kabul edilir (128gb = 128 gb)", () => {
-  const out = filterProductsByQuery(
-    "iphone 15 128gb",
-    [p("Apple iPhone 15 128 GB Siyah"), p("Apple iPhone 15 256 GB Siyah")],
+    [p("Apple iPhone 15 128 GB Siyah"), p("Apple iPhone 15 128GB Siyah")],
     undefined,
     true,
   );
   assert.equal(out.length, 1);
   assert.ok(out[0].title.includes("128 GB"));
+});
+
+test("tam eşleşme modunda 128gb yalnızca bitişik yazımı eşler", () => {
+  const out = filterProductsByQuery(
+    "iphone 15 128gb",
+    [p("Apple iPhone 15 128GB Siyah"), p("Apple iPhone 15 128 GB Siyah")],
+    undefined,
+    true,
+  );
+  assert.equal(out.length, 1);
+  assert.ok(out[0].title.includes("128GB"));
 });
 
 test("dizüstü alt kategorisinde aksesuar satırları elenir", () => {

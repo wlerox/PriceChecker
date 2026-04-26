@@ -7,13 +7,14 @@ import { isRelevanceLoggingEnabled } from "./relevanceLoggingContext.ts";
  * Tam sayı tokenlarında: "50" hem "5080" hem "5060" ön eki olarak geçmesin diye,
  * sorguda daha uzun bir rakam tokenı varsa kısa önek atılır.
  */
-export function queryTokensForMatch(query: string): string[] {
+export function queryTokensForMatch(query: string, splitMixedAlphaNumeric = true): string[] {
   const raw = query
     .toLocaleLowerCase("tr")
     .split(/[^\p{L}\p{N}]+/u)
     .map((w) => w.trim())
     .filter((w) => w.length >= 2)
     .flatMap((w) => {
+      if (!splitMixedAlphaNumeric) return [w];
       // "128gb" -> ["128","gb"], "5060ti" -> ["5060","ti"].
       // Böylece bitişik/ayrık yazımlar aynı şekilde eşleşebilir.
       const parts = w.match(/\p{N}+|\p{L}+/gu) ?? [w];
@@ -88,18 +89,7 @@ function titleMatchesQueryTokensInOrder(foldedTitle: string, foldedTokens: strin
 function titleMatchesQueryTokensExactly(foldedTitle: string, foldedTokens: string[]): boolean {
   if (foldedTokens.length === 0) return true;
   const escaped = foldedTokens.map(escapeRegExp);
-  const joined = escaped
-    .map((tok, idx) => {
-      if (idx === 0) return tok;
-      const prev = foldedTokens[idx - 1]!;
-      const curr = foldedTokens[idx]!;
-      const prevIsDigits = /^\d+$/.test(prev);
-      const currIsDigits = /^\d+$/.test(curr);
-      const between =
-        prevIsDigits !== currIsDigits ? "[^\\p{L}\\p{N}]*" : "[^\\p{L}\\p{N}]+";
-      return `${between}${tok}`;
-    })
-    .join("");
+  const joined = escaped.join("[^\\p{L}\\p{N}]+");
   const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])${joined}(?:$|[^\\p{L}\\p{N}])`, "u");
   return re.test(foldedTitle);
 }
@@ -115,7 +105,7 @@ export function filterProductsByQuery(
   exactMatch = false,
   onlyNew = false,
 ): Product[] {
-  const tokens = [...new Set(queryTokensForMatch(query))];
+  const tokens = [...new Set(queryTokensForMatch(query, !exactMatch))];
   const foldedTokens = tokens.map(foldForMatch);
   const loggingOn = isRelevanceLoggingEnabled();
   return products.filter((p) => {
