@@ -51,3 +51,26 @@ export function finalizeProductsForSort(
   if (sort === "relevance") return takeFirstProducts(products, max);
   return takeCheapestProducts(products, max);
 }
+
+export function buildNoMatchMessage(
+  store: string,
+  query: string,
+  pagesScanned: number,
+  candidateCount: number,
+  elapsedMs: number,
+  budgetMs: number,
+): string {
+  const elapsedSec = Math.max(1, Math.round(elapsedMs / 1000));
+  const budgetSec = Math.max(1, Math.round(budgetMs / 1000));
+  const timedOut = elapsedMs >= budgetMs;
+  if (timedOut) {
+    return (
+      `${store}: "${query}" için ${budgetSec} sn arama bütçesi doldu, eşleşen ürün bulunamadı ` +
+      `(${pagesScanned} sayfa tarandı, ${candidateCount} aday ürün elendi, süre=${elapsedSec}s).`
+    );
+  }
+  return (
+    `${store}: "${query}" için eşleşen ürün bulunamadı ` +
+    `(${pagesScanned} sayfa tarandı, ${candidateCount} aday ürün elendi, süre=${elapsedSec}s).`
+  );
+}

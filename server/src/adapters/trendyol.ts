@@ -11,6 +11,7 @@ import {
 import type { SortMode } from "../sortMode.ts";
 import { SITE_SEARCH_PARAMS, buildStoreSearchUrl } from "../siteSearchParams.ts";
 import {
+  buildNoMatchMessage,
   finalizeProductsForSort,
   pageAllOutsideRange,
   shouldStopBySortOrderedRange,
@@ -285,6 +286,7 @@ export async function searchTrendyol(
   const byUrl = new Map<string, Product>();
   const budgetMs = getPerStoreTimeoutMs();
   const t0 = Date.now();
+  let pi = 0;
 
   const browser = await launchChromiumPreferInstalled(playwrightHeadless());
 
@@ -300,7 +302,6 @@ export async function searchTrendyol(
     await page.goto(`${BASE}/`, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
     await delay(250);
 
-    let pi = 0;
     let consecutiveEmpty = 0;
     while (true) {
       if (Date.now() - t0 >= budgetMs) break;
@@ -357,5 +358,8 @@ export async function searchTrendyol(
   const out = [...byUrl.values()];
   let relevant = filterProductsByQuery(query, out, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
+  if (relevant.length === 0) {
+    throw new Error(buildNoMatchMessage("Trendyol", query, pi, out.length, Date.now() - t0, budgetMs));
+  }
   return finalizeProductsForSort(relevant, max, sort);
 }

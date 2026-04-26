@@ -11,6 +11,7 @@ import {
 import type { SortMode } from "../sortMode.ts";
 import { SITE_SEARCH_PARAMS } from "../siteSearchParams.ts";
 import {
+  buildNoMatchMessage,
   finalizeProductsForSort,
   pageAllOutsideRange,
   shouldStopBySortOrderedRange,
@@ -198,10 +199,12 @@ export async function searchKoctas(
   const merged: Product[] = [];
   const seen = new Set<string>();
   let consecutiveEmpty = 0;
+  let pagesScanned = 0;
   const session = createFetchSession();
 
   for (let pg = 1; ; pg++) {
     if (Date.now() - t0 >= budgetMs) break;
+    pagesScanned = pg;
 
     const url = buildPageUrl(query, pg, sort, priceRange);
     let page: Product[] = [];
@@ -240,5 +243,8 @@ export async function searchKoctas(
 
   let relevant = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
+  if (relevant.length === 0) {
+    throw new Error(buildNoMatchMessage("Koçtaş", query, pagesScanned, merged.length, Date.now() - t0, budgetMs));
+  }
   return finalizeProductsForSort(relevant, max, sort);
 }

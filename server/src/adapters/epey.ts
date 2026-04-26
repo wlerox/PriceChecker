@@ -11,6 +11,7 @@ import {
 import type { SortMode } from "../sortMode.ts";
 import { SITE_SEARCH_PARAMS } from "../siteSearchParams.ts";
 import {
+  buildNoMatchMessage,
   finalizeProductsForSort,
   pageAllOutsideRange,
   shouldStopBySortOrderedRange,
@@ -142,10 +143,12 @@ export async function searchEpey(
   const t0 = Date.now();
   const merged: Product[] = [];
   const session = createFetchSession();
+  let pagesScanned = 0;
 
   let consecutiveEmpty = 0;
   for (let pg = 1; ; pg++) {
     if (Date.now() - t0 >= budgetMs) break;
+    pagesScanned = pg;
 
     const url = buildEpeyUrl(query, pg, sort);
     let html = "";
@@ -187,5 +190,8 @@ export async function searchEpey(
 
   let relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
+  if (relevant.length === 0) {
+    throw new Error(buildNoMatchMessage("Epey", query, pagesScanned, dedupeByUrl(merged).length, Date.now() - t0, budgetMs));
+  }
   return finalizeProductsForSort(relevant, max, sort);
 }

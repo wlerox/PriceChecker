@@ -9,7 +9,7 @@ import { foldForMatch, filterProductsByQuery } from "../relevance.ts";
 import { filterProductsByPriceRange, type PriceRange } from "../priceRange.ts";
 import type { SortMode } from "../sortMode.ts";
 import { SITE_SEARCH_PARAMS, buildStoreSearchUrl } from "../siteSearchParams.ts";
-import { finalizeProductsForSort } from "../adapterHelpers.ts";
+import { buildNoMatchMessage, finalizeProductsForSort } from "../adapterHelpers.ts";
 
 const BASE = "https://www.amazon.com.tr";
 const TIMEOUT_MS = 55_000;
@@ -158,6 +158,7 @@ export async function searchAmazonTr(
   sort: SortMode = "price-asc",
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
+  const t0 = Date.now();
   // Amazon URL'inde boşluk `+` olarak gider; `buildStoreSearchUrl` `%20` döndürür; çeviriyoruz.
   const url = buildStoreSearchUrl(SITE_SEARCH_PARAMS["Amazon TR"], {
     query,
@@ -175,6 +176,9 @@ export async function searchAmazonTr(
         if (good.length >= max) {
           const result = pickBestAmazonProducts(relevant, max, sort);
           console.info(`[Amazon TR] curl ok → ${all.length} aday, ${relevant.length} eşleşen, ${good.length} ana ürün → seçilen ${result.length}`);
+          if (result.length === 0) {
+            throw new Error(buildNoMatchMessage("Amazon TR", query, 1, all.length, Date.now() - t0, TIMEOUT_MS));
+          }
           return result;
         }
         console.info(`[Amazon TR] curl ok ama yetersiz (${good.length}/${max} ana ürün) → tarayıcı ile sayfalama`);
@@ -205,5 +209,8 @@ export async function searchAmazonTr(
   const { all, relevant } = evaluateProducts(html, query, max, priceRange, exactMatch, onlyNew);
   const result = pickBestAmazonProducts(relevant, max, sort);
   console.info(`[Amazon TR] toplam: ${all.length} aday → sorgu eşleşen ${relevant.length} → seçilen ${result.length} (max=${max})`);
+  if (result.length === 0) {
+    throw new Error(buildNoMatchMessage("Amazon TR", query, 1, all.length, Date.now() - t0, TIMEOUT_MS));
+  }
   return result;
 }

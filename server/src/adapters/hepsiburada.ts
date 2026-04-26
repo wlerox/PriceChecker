@@ -16,6 +16,7 @@ import {
 import type { SortMode } from "../sortMode.ts";
 import { SITE_SEARCH_PARAMS, buildStoreSearchUrl } from "../siteSearchParams.ts";
 import {
+  buildNoMatchMessage,
   finalizeProductsForSort,
   shouldStopBySortOrderedRange,
 } from "../adapterHelpers.ts";
@@ -165,10 +166,12 @@ export async function searchHepsiburada(
   const budgetMs = getPerStoreTimeoutMs();
   const t0 = Date.now();
   let consecutiveEmpty = 0;
+  let pagesScanned = 0;
 
   try {
     for (let page = 1; page <= HARD_PAGE_SAFETY_CAP; page++) {
       if (Date.now() - t0 >= budgetMs) break;
+      pagesScanned = page;
 
       const html = await fetchSearchHtml(query, page, hbSession ?? undefined, sort, priceRange);
 
@@ -218,6 +221,9 @@ export async function searchHepsiburada(
 
   let relevant = filterProductsByQuery(query, merged, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
+  if (relevant.length === 0) {
+    throw new Error(buildNoMatchMessage("Hepsiburada", query, pagesScanned, dedupeByUrl(merged).length, Date.now() - t0, budgetMs));
+  }
   return finalizeProductsForSort(relevant, max, sort);
 }
 

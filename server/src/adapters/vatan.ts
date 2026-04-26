@@ -12,6 +12,7 @@ import {
 import type { SortMode } from "../sortMode.ts";
 import { SITE_SEARCH_PARAMS } from "../siteSearchParams.ts";
 import {
+  buildNoMatchMessage,
   finalizeProductsForSort,
   pageAllOutsideRange,
   shouldStopBySortOrderedRange,
@@ -195,6 +196,8 @@ export async function searchVatan(
   const categorySeg = vatanCategorySegment(typeHint);
   const budgetMs = getPerStoreTimeoutMs();
   const t0 = Date.now();
+  let totalPagesScanned = 0;
+  let totalCandidates = 0;
 
   for (let i = 0; i < slugs.length; i++) {
     if (Date.now() - t0 >= budgetMs) break;
@@ -218,6 +221,7 @@ export async function searchVatan(
           stopAttempt = true;
           break;
         }
+        totalPagesScanned += 1;
 
         const url = buildListUrl(pathSeg, attempt.categorySeg, pg, sort, priceRange);
         let html = "";
@@ -235,6 +239,7 @@ export async function searchVatan(
           seen.add(p.url);
           merged.push(p);
           newUrls += 1;
+          totalCandidates += 1;
         }
 
         if (page.length === 0 || newUrls === 0) {
@@ -261,5 +266,7 @@ export async function searchVatan(
     }
   }
 
-  return [];
+  throw new Error(
+    buildNoMatchMessage("Vatan", query, totalPagesScanned, totalCandidates, Date.now() - t0, budgetMs),
+  );
 }

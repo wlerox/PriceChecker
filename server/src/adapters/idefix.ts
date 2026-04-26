@@ -11,6 +11,7 @@ import {
 import type { SortMode } from "../sortMode.ts";
 import { SITE_SEARCH_PARAMS, buildStoreSearchUrl } from "../siteSearchParams.ts";
 import {
+  buildNoMatchMessage,
   finalizeProductsForSort,
   pageAllOutsideRange,
   shouldStopBySortOrderedRange,
@@ -189,5 +190,10 @@ export async function searchIdefix(
   const unique = dedupeByUrl(merged);
   let relevant = filterProductsByQuery(query, unique, undefined, exactMatch, onlyNew);
   relevant = filterProductsByPriceRange(relevant, priceRange);
+  if (relevant.length === 0) {
+    throw new Error(
+      buildNoMatchMessage("İdefix", query, pg, unique.length, Date.now() - t0, budgetMs),
+    );
+  }
   return finalizeProductsForSort(relevant, max, sort);
 }

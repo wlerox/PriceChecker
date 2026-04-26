@@ -11,6 +11,7 @@ import {
 import type { SortMode } from "../sortMode.ts";
 import { SITE_SEARCH_PARAMS, buildStoreSearchUrl } from "../siteSearchParams.ts";
 import {
+  buildNoMatchMessage,
   finalizeProductsForSort,
   pageAllOutsideRange,
   shouldStopBySortOrderedRange,
@@ -232,6 +233,12 @@ export async function searchTeknosa(
   console.info(
     `[fetch:Teknosa] toplam: ${allProducts.length} aday → eşleşen ${relevant.length} → seçilen ${result.length} (max=${max}) | ${elapsed()}ms`,
   );
+
+  if (result.length === 0) {
+    throw new Error(
+      buildNoMatchMessage("Teknosa", query, pageMap.size > 0 ? Math.max(...pageMap.values()) : 0, allProducts.length, elapsed(), budget),
+    );
+  }
 
   return result;
 }
