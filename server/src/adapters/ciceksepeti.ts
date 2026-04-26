@@ -237,9 +237,23 @@ async function paginate(
       if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
       continue;
     }
+    let newUrls = 0;
+    const seen = new Set(merged.map((x) => x.url));
+    for (const p of batch) {
+      if (seen.has(p.url)) continue;
+      seen.add(p.url);
+      merged.push(p);
+      newUrls += 1;
+    }
+    if (newUrls === 0) {
+      consecutiveEmpty += 1;
+      const relevantSoFar = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
+      const inRangeSoFar = filterProductsByPriceRange(relevantSoFar, priceRange);
+      if (inRangeSoFar.length >= max) return { finished: true, pagesFetched, lastError, timedOut: false };
+      if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
+      continue;
+    }
     consecutiveEmpty = 0;
-
-    for (const p of batch) merged.push(p);
 
     const relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
     if (shouldStopBySortOrderedRange(relevant, priceRange, sort)) return { finished: true, pagesFetched, lastError, timedOut: false };

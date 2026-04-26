@@ -337,11 +337,21 @@ export async function searchTrendyol(
         if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
         continue;
       }
-      consecutiveEmpty = 0;
-
+      let newUrls = 0;
       for (const p of batch) {
+        if (byUrl.has(p.url)) continue;
         byUrl.set(p.url, p);
+        newUrls += 1;
       }
+      if (newUrls === 0) {
+        consecutiveEmpty += 1;
+        const relevantSoFar = filterProductsByQuery(query, [...byUrl.values()], undefined, exactMatch, onlyNew);
+        const inRangeSoFar = filterProductsByPriceRange(relevantSoFar, priceRange);
+        if (inRangeSoFar.length >= max) break;
+        if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
+        continue;
+      }
+      consecutiveEmpty = 0;
 
       const relevant = filterProductsByQuery(query, [...byUrl.values()], undefined, exactMatch, onlyNew);
       if (shouldStopBySortOrderedRange(relevant, priceRange, sort)) break;

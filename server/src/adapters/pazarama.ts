@@ -115,6 +115,7 @@ export async function searchPazarama(
 ): Promise<Product[]> {
   const max = getMaxProductsPerStore();
   const merged: Product[] = [];
+  const seenUrls = new Set<string>();
   const budgetMs = getPerStoreTimeoutMs();
   const t0 = Date.now();
 
@@ -156,8 +157,22 @@ export async function searchPazarama(
       if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
       continue;
     }
+    let newUrls = 0;
+    for (const p of page) {
+      if (seenUrls.has(p.url)) continue;
+      seenUrls.add(p.url);
+      merged.push(p);
+      newUrls += 1;
+    }
+    if (newUrls === 0) {
+      consecutiveEmpty += 1;
+      const relevantSoFar = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
+      const inRangeSoFar = filterProductsByPriceRange(relevantSoFar, priceRange);
+      if (inRangeSoFar.length >= max) break;
+      if (consecutiveEmpty >= MAX_CONSECUTIVE_EMPTY_PAGES) break;
+      continue;
+    }
     consecutiveEmpty = 0;
-    for (const p of page) merged.push(p);
 
     const relevant = filterProductsByQuery(query, dedupeByUrl(merged), undefined, exactMatch, onlyNew);
     if (shouldStopBySortOrderedRange(relevant, priceRange, sort)) break;
